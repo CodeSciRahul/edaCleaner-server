@@ -1,0 +1,49 @@
+{
+  "name": "edacleaner-server",
+  "version": "1.0.0",
+  "description": "Production backend for EdaCleaner subscriptions, multi-install, and version management",
+  "main": "dist/server.js",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "rimraf dist && tsc && tsc-alias",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "keywords": [
+    "edacleaner",
+    "express",
+    "typescript",
+    "mongodb"
+  ],
+  "author": "",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1093.0",
+    "@aws-sdk/s3-request-presigner": "^3.1093.0",
+    "compression": "^1.8.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-validator": "^7.3.2",
+    "helmet": "^8.3.0",
+    "mongoose": "^9.7.4",
+    "morgan": "^1.11.0"
+  },
+  "devDependencies": {
+    "@types/compression": "^1.8.1",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/morgan": "^1.9.10",
+    "@types/node": "^26.1.1",
+    "rimraf": "^6.1.3",
+    "tsc-alias": "^1.9.1",
+    "tsx": "^4.23.1",
+    "typescript": "^5.9.3"
+  }
+}

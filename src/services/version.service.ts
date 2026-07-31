@@ -200,6 +200,7 @@ export class VersionService {
   async resolveDownloadTarget(input: {
     platform: Platform;
     architecture?: Architecture;
+    installerType?: InstallerType;
     version?: string;
   }) {
     const doc = input.version
@@ -216,23 +217,59 @@ export class VersionService {
     }
 
     const files = doc.files ?? [];
-    const platformFiles = files.filter((file) => file.platform === input.platform);
+    let candidates = files.filter((file) => file.platform === input.platform);
 
-    if (platformFiles.length === 0) {
+    if (candidates.length === 0) {
       throw ApiError.notFound(
         `No installer available for platform: ${input.platform}`,
       );
     }
 
-    let file = input.architecture
-      ? platformFiles.find((item) => item.architecture === input.architecture)
-      : undefined;
+    if (input.architecture) {
+      const byArch = candidates.filter(
+        (item) => item.architecture === input.architecture,
+      );
+      if (byArch.length > 0) candidates = byArch;
+    }
 
-    if (!file) {
+    if (input.installerType) {
+      const byType = candidates.filter(
+        (item) => item.installerType === input.installerType,
+      );
+      if (byType.length === 0) {
+        throw ApiError.notFound(
+          `No installer available for ${input.platform}/${input.installerType}`,
+        );
+      }
+      candidates = byType;
+    }
+
+    // Prefer native packages over portable AppImage for Linux defaults.
+    const linuxPreference: InstallerType[] = ['deb', 'rpm', 'appimage'];
+
+    let file: (typeof candidates)[number] | undefined;
+
+    if (input.installerType) {
+      file = candidates[0];
+    } else if (input.platform === 'linux') {
       file =
-        platformFiles.find((item) => item.latest) ??
-        platformFiles.find((item) => item.architecture === 'x64') ??
-        platformFiles[0];
+        linuxPreference
+          .map((type) =>
+            candidates.find(
+              (item) => item.installerType === type && item.latest !== false,
+            ),
+          )
+          .find(Boolean) ??
+        linuxPreference
+          .map((type) => candidates.find((item) => item.installerType === type))
+          .find(Boolean) ??
+        candidates.find((item) => item.latest) ??
+        candidates[0];
+    } else {
+      file =
+        candidates.find((item) => item.latest) ??
+        candidates.find((item) => item.architecture === 'x64') ??
+        candidates[0];
     }
 
     if (!file?.storageUrl || !file.fileName) {

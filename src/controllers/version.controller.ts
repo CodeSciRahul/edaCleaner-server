@@ -8,6 +8,7 @@ import {
   type Architecture,
   type CreateVersionInput,
   type AddVersionFilesInput,
+  type InstallerType,
   type Platform,
 } from '../services/version.service.js';
 import { s3Service } from '../services/s3.service.js';
@@ -44,10 +45,15 @@ export class VersionController {
         typeof req.query.architecture === 'string'
           ? (req.query.architecture as Architecture)
           : undefined;
+      const installerType =
+        typeof req.query.installerType === 'string'
+          ? (req.query.installerType as InstallerType)
+          : undefined;
 
       const target = await versionService.resolveDownloadTarget({
         platform,
         ...(architecture ? { architecture } : {}),
+        ...(installerType ? { installerType } : {}),
       });
 
       const signed = await s3Service.createPresignedDownload({

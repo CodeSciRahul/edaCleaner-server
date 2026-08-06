@@ -3,7 +3,16 @@ import type { EnvConfig, NodeEnvironment } from '../interfaces/env.interface.js'
 
 dotenv.config();
 
-const REQUIRED_ENV_KEYS = ['NODE_ENV', 'PORT', 'MONGODB_URI'] as const;
+const REQUIRED_ENV_KEYS = [
+  'NODE_ENV',
+  'PORT',
+  'MONGODB_URI',
+  'JWT_SECRET',
+  'STRIPE_SECRET_KEY',
+  'STRIPE_WEBHOOK_SECRET',
+  'STRIPE_PRO_PRICE_ID',
+  'STRIPE_PREMIUM_PRICE_ID',
+] as const;
 
 function getEnv(key: string, fallback?: string): string {
   const value = process.env[key] ?? fallback;
@@ -65,12 +74,31 @@ export const env: EnvConfig = Object.freeze({
   ),
   BODY_LIMIT: getEnv('BODY_LIMIT', '10mb'),
   LOG_LEVEL: getEnv('LOG_LEVEL', 'dev'),
+  JWT_SECRET: getEnv('JWT_SECRET'),
+  JWT_EXPIRES_IN: getEnv('JWT_EXPIRES_IN', '7d'),
   AWS: {
     AWS_S3_BUCKET_NAME: getEnv('AWS_S3_BUCKET_NAME'),
     AWS_S3_ACCESS_KEY_ID: getEnv('AWS_S3_ACCESS_KEY_ID'),
     AWS_S3_SECRET_ACCESS_KEY: getEnv('AWS_S3_SECRET_ACCESS_KEY'),
     AWS_S3_REGION: getEnv('AWS_S3_REGION'),
-  }
+  },
+  STRIPE: {
+    STRIPE_SECRET_KEY: getEnv('STRIPE_SECRET_KEY'),
+    STRIPE_PUBLISHABLE_KEY: getEnv('STRIPE_PUBLISHABLE_KEY', ''),
+    STRIPE_WEBHOOK_SECRET: getEnv('STRIPE_WEBHOOK_SECRET'),
+    STRIPE_PRO_PRICE_ID: getEnv('STRIPE_PRO_PRICE_ID'),
+    STRIPE_PREMIUM_PRICE_ID: getEnv('STRIPE_PREMIUM_PRICE_ID'),
+    STRIPE_PRO_PRODUCT_ID: getEnv('STRIPE_PRO_PRODUCT_ID', ''),
+    STRIPE_PREMIUM_PRODUCT_ID: getEnv('STRIPE_PREMIUM_PRODUCT_ID', ''),
+    STRIPE_SUCCESS_URL: getEnv(
+      'STRIPE_SUCCESS_URL',
+      'http://localhost:3000/pricing?checkout=success',
+    ),
+    STRIPE_CANCEL_URL: getEnv(
+      'STRIPE_CANCEL_URL',
+      'http://localhost:3000/pricing?checkout=cancel',
+    ),
+  },
 });
 
 export const isProduction = env.NODE_ENV === 'production';

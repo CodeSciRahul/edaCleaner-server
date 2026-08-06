@@ -9,6 +9,7 @@ import { morganFormat, morganOptions } from './config/index.js';
 import { requestIdMiddleware } from './middlewares/requestId.middleware.js';
 import { notFoundMiddleware } from './middlewares/notFound.middleware.js';
 import { globalErrorHandler } from './middlewares/error.middleware.js';
+import { webhookController } from './controllers/webhook.controller.js';
 import v1Router from './routes/v1/index.js';
 import { healthController } from './controllers/health.controller.js';
 
@@ -23,6 +24,16 @@ export function createApp(): Application {
   app.use(cors(corsOptions));
   app.use(compression());
   app.use(morgan(morganFormat, morganOptions));
+
+  /**
+   * Stripe webhooks require the raw body for signature verification.
+   * Must be registered before express.json().
+   */
+  app.post(
+    `${env.API_PREFIX}/stripe/webhook`,
+    express.raw({ type: 'application/json' }),
+    webhookController.handle,
+  );
 
   app.use(express.json({ limit: env.BODY_LIMIT }));
   app.use(express.urlencoded({ extended: true, limit: env.BODY_LIMIT }));

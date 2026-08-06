@@ -3,12 +3,14 @@ import { createApp } from './app.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { env } from './config/env.js';
 import { MESSAGES } from './constants/index.js';
+import { planService } from './services/plan.service.js';
 import { logger } from './utils/logger.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
 async function bootstrap(): Promise<void> {
   await connectDatabase();
+  await planService.seedPlans();
 
   const app = createApp();
   const server = http.createServer(app);

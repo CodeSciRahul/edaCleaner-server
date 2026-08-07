@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { asyncHandler } from '../middlewares/asyncHandler.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
-import { MESSAGES } from '../constants/index.js';
+import { MESSAGES, parseBillingInterval } from '../constants/index.js';
 import { ApiError } from '../utils/ApiError.js';
 import { subscriptionService } from '../services/subscription.service.js';
 
@@ -36,9 +36,11 @@ export class SubscriptionController {
   public checkout = asyncHandler(
     async (req: Request, res: Response): Promise<void> => {
       const userId = requireUserId(req);
+      const billingInterval = parseBillingInterval(req.body.billingInterval, 'month');
       const data = await subscriptionService.createCheckout(
         userId,
         String(req.body.planId),
+        billingInterval,
       );
 
       ApiResponse.success({
@@ -81,9 +83,11 @@ export class SubscriptionController {
   public changePlan = asyncHandler(
     async (req: Request, res: Response): Promise<void> => {
       const userId = requireUserId(req);
+      const billingInterval = parseBillingInterval(req.body.billingInterval, 'month');
       const data = await subscriptionService.changePlan(
         userId,
         String(req.body.planId),
+        billingInterval,
       );
 
       ApiResponse.success({

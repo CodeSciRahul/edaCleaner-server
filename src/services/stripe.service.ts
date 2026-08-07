@@ -51,20 +51,30 @@ export function getSubscriptionPriceIds(subscription: Stripe.Subscription): {
   priceId: string | null;
   productId: string | null;
   itemId: string | null;
+  interval: 'month' | 'year' | null;
 } {
   const item = subscription.items.data[0];
   if (!item) {
-    return { priceId: null, productId: null, itemId: null };
+    return { priceId: null, productId: null, itemId: null, interval: null };
   }
 
   const price = item.price;
   const product =
     typeof price.product === 'string' ? price.product : price.product?.id ?? null;
 
+  const recurringInterval = price.recurring?.interval;
+  const interval =
+    recurringInterval === 'year'
+      ? ('year' as const)
+      : recurringInterval === 'month'
+        ? ('month' as const)
+        : null;
+
   return {
     priceId: price.id,
     productId: product,
     itemId: item.id,
+    interval,
   };
 }
 

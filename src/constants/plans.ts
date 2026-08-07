@@ -1,6 +1,9 @@
 export const PLAN_SLUGS = ['free', 'pro', 'premium'] as const;
 export type PlanSlug = (typeof PLAN_SLUGS)[number];
 
+export const BILLING_INTERVALS = ['month', 'year'] as const;
+export type BillingInterval = (typeof BILLING_INTERVALS)[number];
+
 export const SUBSCRIPTION_STATUSES = [
   'active',
   'trialing',
@@ -18,13 +21,17 @@ export const PLAN_RANK: Record<PlanSlug, number> = {
   premium: 2,
 };
 
+/**
+ * Catalog amounts are in cents.
+ * Pro: $3/mo or $39/yr · Premium: $5/mo or $59/yr (matches marketing site).
+ */
 export const PLAN_CATALOG = [
   {
     name: 'Free',
     slug: 'free' as const,
     monthlyPrice: 0,
+    yearlyPrice: 0,
     currency: 'usd',
-    billingInterval: 'month' as const,
     isTrialAvailable: false,
     trialDays: 0,
     features: [
@@ -39,8 +46,8 @@ export const PLAN_CATALOG = [
     name: 'Pro',
     slug: 'pro' as const,
     monthlyPrice: 300,
+    yearlyPrice: 3900,
     currency: 'usd',
-    billingInterval: 'month' as const,
     isTrialAvailable: true,
     trialDays: 7,
     features: [
@@ -55,8 +62,8 @@ export const PLAN_CATALOG = [
     name: 'Premium',
     slug: 'premium' as const,
     monthlyPrice: 500,
+    yearlyPrice: 5900,
     currency: 'usd',
-    billingInterval: 'month' as const,
     isTrialAvailable: true,
     trialDays: 7,
     features: [
@@ -74,6 +81,20 @@ export function isPlanSlug(value: string): value is PlanSlug {
   return (PLAN_SLUGS as readonly string[]).includes(value);
 }
 
+export function isBillingInterval(value: string): value is BillingInterval {
+  return (BILLING_INTERVALS as readonly string[]).includes(value);
+}
+
 export function isPaidPlan(slug: PlanSlug): boolean {
   return slug === 'pro' || slug === 'premium';
+}
+
+export function parseBillingInterval(
+  value: unknown,
+  fallback: BillingInterval = 'month',
+): BillingInterval {
+  if (typeof value === 'string' && isBillingInterval(value)) {
+    return value;
+  }
+  return fallback;
 }

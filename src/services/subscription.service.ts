@@ -3,8 +3,12 @@ import UserModel from '../models/user.model.js';
 import UserSubscriptionModel from '../models/userSubscription.model.js';
 import SubscriptionHistoryModel from '../models/subscriptionHistory.model.js';
 import { ApiError } from '../utils/ApiError.js';
-import { MESSAGES, PLAN_RANK, isPaidPlan, isPlanSlug } from '../constants/index.js';
-import type { PlanSlug, SubscriptionStatus } from '../constants/plans.js';
+import { MESSAGES, PLAN_RANK, isPaidPlan, isPlanSlug, parseBillingInterval } from '../constants/index.js';
+import type {
+  BillingInterval,
+  PlanSlug,
+  SubscriptionStatus,
+} from '../constants/plans.js';
 import { planService } from './plan.service.js';
 import {
   getSubscriptionPeriod,
@@ -88,6 +92,7 @@ export class SubscriptionService {
 
     return {
       currentPlan: sub.currentPlan,
+      billingInterval: sub.billingInterval,
       status: sub.status,
       cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
       pendingPlan: sub.pendingPlan,
@@ -98,6 +103,8 @@ export class SubscriptionService {
       features: plan.features,
       isPaid: isPaidPlan(sub.currentPlan),
       hasActiveAccess: this.hasActiveAccess(sub.status, sub.currentPlan),
+      monthlyPrice: plan.monthlyPrice,
+      yearlyPrice: plan.yearlyPrice,
     };
   }
 
@@ -138,14 +145,17 @@ export class SubscriptionService {
     return customer.id;
   }
 
-  async createCheckout(userId: string, planId: string) {
+  async createCheckout(
+    userId: string,
+    planId: string,
+    billingInterval: BillingInterval = 'month',
+  ) {
     const plan = await planService.getById(planId);
     if (!isPlanSlug(plan.slug) || !isPaidPlan(plan.slug)) {
       throw ApiError.badRequest('Checkout is only available for Pro and Premium');
     }
-    if (!plan.stripePriceId) {
-      throw ApiError.badRequest('Plan is missing a Stripe price configuration');
-    }
+
+    const priceId = planService.resolvePriceId(plan, billingInterval);
 
     const sub = await this.getOrCreateForUser(userId);
     if (
@@ -165,11 +175,11 @@ export class SubscriptionService {
     const trialEligible =
       plan.isTrialAvailable && plan.trialDays > 0 && !user.trialUsed;
 
-    const idempotencyKey = `checkout:${userId}:${plan.slug}:${plan.stripePriceId}`;
+    const idempotencyKey = `checkout:${userId}:${plan.slug}:${billingInterval}:${priceId}`;
 
     const session = await stripeService.createCheckoutSession({
       customerId,
-      priceId: plan.stripePriceId,
+      priceId,
       userId,
       planSlug: plan.slug,
       ...(trialEligible ? { trialDays: plan.trialDays } : {}),
@@ -179,6 +189,7 @@ export class SubscriptionService {
     logger.info('Checkout session created', {
       userId,
       plan: plan.slug,
+      billingInterval,
       sessionId: session.id,
       trial: trialEligible,
     });
@@ -188,14 +199,15 @@ export class SubscriptionService {
       eventType: 'checkout.created',
       fromPlan: sub.currentPlan,
       toPlan: plan.slug,
-      message: `Checkout session created for ${plan.name}`,
-      metadata: { sessionId: session.id, trialEligible },
+      message: `Checkout session created for ${plan.name} (${billingInterval})`,
+      metadata: { sessionId: session.id, trialEligible, billingInterval },
     });
 
     return {
       sessionId: session.id,
       url: session.url,
       publishableKey: env.STRIPE.STRIPE_PUBLISHABLE_KEY,
+      billingInterval,
     };
   }
 
@@ -249,7 +261,11 @@ export class SubscriptionService {
     return this.getStatus(userId);
   }
 
-  async changePlan(userId: string, planId: string) {
+  async changePlan(
+    userId: string,
+    planId: string,
+    billingInterval: BillingInterval = 'month',
+  ) {
     const targetPlan = await planService.getById(planId);
     if (!isPlanSlug(targetPlan.slug)) {
       throw ApiError.badRequest('Invalid plan');
@@ -258,8 +274,14 @@ export class SubscriptionService {
     const sub = await this.getOrCreateForUser(userId);
     const from = sub.currentPlan;
     const to = targetPlan.slug;
+    const currentInterval = sub.billingInterval ?? 'month';
 
-    if (from === to && !sub.cancelAtPeriodEnd && !sub.pendingPlan) {
+    if (
+      from === to &&
+      !sub.cancelAtPeriodEnd &&
+      !sub.pendingPlan &&
+      (to === 'free' || currentInterval === billingInterval)
+    ) {
       throw ApiError.badRequest('Already on the selected plan');
     }
 
@@ -267,7 +289,7 @@ export class SubscriptionService {
     if (!isPaidPlan(from) && isPaidPlan(to)) {
       return {
         mode: 'checkout' as const,
-        ...(await this.createCheckout(userId, planId)),
+        ...(await this.createCheckout(userId, planId, billingInterval)),
       };
     }
 
@@ -286,33 +308,50 @@ export class SubscriptionService {
       throw ApiError.badRequest('No active Stripe subscription to change');
     }
 
+    const targetPriceId = planService.resolvePriceId(targetPlan, billingInterval);
+
     const stripeSub = await stripeService.retrieveSubscription(
       sub.stripeSubscriptionId,
     );
     const { priceId: currentPriceId, itemId } = getSubscriptionPriceIds(stripeSub);
-    if (!currentPriceId || !itemId || !targetPlan.stripePriceId) {
+    if (!currentPriceId || !itemId) {
       throw ApiError.badRequest('Unable to resolve Stripe price items');
     }
 
-    const isUpgrade = PLAN_RANK[to] > PLAN_RANK[from];
+    if (currentPriceId === targetPriceId) {
+      throw ApiError.badRequest('Already on the selected plan and billing interval');
+    }
 
-    if (isUpgrade) {
+    const isUpgrade = PLAN_RANK[to] > PLAN_RANK[from];
+    const isSameTierIntervalChange = from === to && currentInterval !== billingInterval;
+
+    // Upgrades (or same-tier interval switches) apply immediately with proration.
+    if (isUpgrade || isSameTierIntervalChange) {
       const updated = await stripeService.upgradeSubscriptionImmediate({
         subscriptionId: sub.stripeSubscriptionId,
         itemId,
-        newPriceId: targetPlan.stripePriceId,
+        newPriceId: targetPriceId,
         planSlug: to,
         userId,
       });
 
       await this.syncFromStripeSubscription(updated, {
-        eventType: 'subscription.upgraded',
-        message: `Upgraded from ${from} to ${to}`,
+        eventType: isSameTierIntervalChange
+          ? 'subscription.interval_changed'
+          : 'subscription.upgraded',
+        message: isSameTierIntervalChange
+          ? `Billing interval changed to ${billingInterval} on ${to}`
+          : `Upgraded from ${from} to ${to} (${billingInterval})`,
         fromPlan: from,
         toPlan: to,
       });
 
-      logger.info('Subscription upgraded', { userId, from, to });
+      logger.info('Subscription updated', {
+        userId,
+        from,
+        to,
+        billingInterval,
+      });
       return {
         mode: 'immediate' as const,
         ...(await this.getStatus(userId)),
@@ -323,7 +362,7 @@ export class SubscriptionService {
     const schedule = await stripeService.scheduleDowngradeAtPeriodEnd({
       subscriptionId: sub.stripeSubscriptionId,
       currentPriceId,
-      newPriceId: targetPlan.stripePriceId,
+      newPriceId: targetPriceId,
       userId,
       planSlug: to,
     });
@@ -338,11 +377,16 @@ export class SubscriptionService {
       fromPlan: from,
       toPlan: to,
       stripeSubscriptionId: sub.stripeSubscriptionId,
-      message: `Downgrade to ${to} scheduled at period end`,
-      metadata: { scheduleId: schedule.id },
+      message: `Downgrade to ${to} (${billingInterval}) scheduled at period end`,
+      metadata: { scheduleId: schedule.id, billingInterval },
     });
 
-    logger.info('Subscription downgrade scheduled', { userId, from, to });
+    logger.info('Subscription downgrade scheduled', {
+      userId,
+      from,
+      to,
+      billingInterval,
+    });
     return {
       mode: 'scheduled' as const,
       ...(await this.getStatus(userId)),
@@ -421,14 +465,18 @@ export class SubscriptionService {
       return null;
     }
 
-    const { priceId, productId } = getSubscriptionPriceIds(subscription);
+    const { priceId, productId, interval: stripeInterval } =
+      getSubscriptionPriceIds(subscription);
     const period = getSubscriptionPeriod(subscription);
 
     let planSlug: PlanSlug = 'free';
+    let billingInterval: BillingInterval | null = stripeInterval;
     if (priceId) {
       const plan = await planService.getByStripePriceId(priceId);
       if (plan && isPlanSlug(plan.slug)) {
         planSlug = plan.slug;
+        billingInterval =
+          planService.intervalForPriceId(plan, priceId) ?? stripeInterval;
       } else if (
         subscription.metadata.planSlug &&
         isPlanSlug(subscription.metadata.planSlug)
@@ -442,6 +490,10 @@ export class SubscriptionService {
       status === 'canceled' || status === 'incomplete_expired'
         ? 'free'
         : planSlug;
+
+    if (effectivePlan === 'free') {
+      billingInterval = null;
+    }
 
     const latestInvoiceId =
       typeof subscription.latest_invoice === 'string'
@@ -466,6 +518,7 @@ export class SubscriptionService {
           stripePriceId: priceId,
           stripeProductId: productId,
           currentPlan: effectivePlan,
+          billingInterval,
           status: effectivePlan === 'free' ? 'active' : status,
           trialStart: subscription.trial_start
             ? new Date(subscription.trial_start * 1000)
@@ -546,6 +599,7 @@ export class SubscriptionService {
 
   toPublic(sub: {
     currentPlan: PlanSlug;
+    billingInterval?: BillingInterval | null;
     status: SubscriptionStatus;
     cancelAtPeriodEnd: boolean;
     pendingPlan: PlanSlug | null;
@@ -558,6 +612,7 @@ export class SubscriptionService {
   }) {
     return {
       currentPlan: sub.currentPlan,
+      billingInterval: sub.billingInterval ?? null,
       status: sub.status,
       cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
       pendingPlan: sub.pendingPlan,

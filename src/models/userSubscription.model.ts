@@ -9,6 +9,7 @@ export interface IUserSubscription {
   stripeProductId: string | null;
   stripeScheduleId: string | null;
   currentPlan: PlanSlug;
+  billingInterval: 'month' | 'year' | null;
   pendingPlan: PlanSlug | null;
   status: SubscriptionStatus;
   trialStart: Date | null;
@@ -50,6 +51,11 @@ const UserSubscriptionSchema = new mongoose.Schema<IUserSubscription>(
       required: true,
       default: 'free',
       index: true,
+    },
+    billingInterval: {
+      type: String,
+      enum: ['month', 'year'],
+      default: null,
     },
     pendingPlan: {
       type: String,

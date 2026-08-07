@@ -13,6 +13,8 @@ export interface StripeEnvConfig {
   STRIPE_WEBHOOK_SECRET: string;
   STRIPE_PRO_PRICE_ID: string;
   STRIPE_PREMIUM_PRICE_ID: string;
+  STRIPE_PRO_YEARLY_PRICE_ID: string;
+  STRIPE_PREMIUM_YEARLY_PRICE_ID: string;
   STRIPE_PRO_PRODUCT_ID: string;
   STRIPE_PREMIUM_PRODUCT_ID: string;
   STRIPE_SUCCESS_URL: string;

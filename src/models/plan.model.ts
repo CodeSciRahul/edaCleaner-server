@@ -4,11 +4,16 @@ import type { PlanSlug } from '../constants/plans.js';
 export interface IPlan {
   name: string;
   slug: PlanSlug;
+  /** Stripe Price ID for monthly billing */
   stripePriceId: string | null;
+  /** Stripe Price ID for yearly billing */
+  stripeYearlyPriceId: string | null;
   stripeProductId: string | null;
+  /** Monthly amount in cents */
   monthlyPrice: number;
+  /** Yearly amount in cents (0 for Free) */
+  yearlyPrice: number;
   currency: string;
-  billingInterval: 'month';
   features: string[];
   isTrialAvailable: boolean;
   trialDays: number;
@@ -30,10 +35,16 @@ const PlanSchema = new mongoose.Schema<IPlan>(
       index: true,
     },
     stripePriceId: { type: String, default: null, index: true, sparse: true },
+    stripeYearlyPriceId: {
+      type: String,
+      default: null,
+      index: true,
+      sparse: true,
+    },
     stripeProductId: { type: String, default: null },
     monthlyPrice: { type: Number, required: true, min: 0 },
+    yearlyPrice: { type: Number, required: true, min: 0, default: 0 },
     currency: { type: String, required: true, default: 'usd', lowercase: true },
-    billingInterval: { type: String, required: true, enum: ['month'], default: 'month' },
     features: { type: [String], default: [] },
     isTrialAvailable: { type: Boolean, default: false },
     trialDays: { type: Number, default: 0, min: 0 },

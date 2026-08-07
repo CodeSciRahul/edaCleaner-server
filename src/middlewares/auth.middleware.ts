@@ -1,14 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
-import jwt from 'jsonwebtoken';
-import { env } from '../config/env.js';
 import { MESSAGES } from '../constants/index.js';
 import { ApiError } from '../utils/ApiError.js';
+import { verifyAccessToken } from '../services/token.service.js';
 import type { AuthUser } from '../interfaces/auth.interface.js';
-
-interface JwtPayload {
-  sub: string;
-  email: string;
-}
 
 function extractBearerToken(header: string | undefined): string | null {
   if (!header) return null;
@@ -32,13 +26,7 @@ export function authenticate(
       return;
     }
 
-    const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
-    if (!decoded.sub || !decoded.email) {
-      next(ApiError.unauthorized('Invalid authentication token'));
-      return;
-    }
-
-    const user: AuthUser = { id: decoded.sub, email: decoded.email };
+    const user: AuthUser = verifyAccessToken(token);
     req.user = user;
     next();
   } catch {
@@ -46,11 +34,5 @@ export function authenticate(
   }
 }
 
-export function signAccessToken(user: AuthUser): string {
-  const options: jwt.SignOptions = {
-    subject: user.id,
-    expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'] & string,
-  };
-
-  return jwt.sign({ email: user.email }, env.JWT_SECRET, options);
-}
+/** @deprecated Prefer token.service.signAccessToken — kept for import compatibility. */
+export { signAccessToken } from '../services/token.service.js';

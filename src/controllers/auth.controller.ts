@@ -12,6 +12,7 @@ export class AuthController {
         email: String(req.body.email),
         password: String(req.body.password),
         ...(typeof req.body.name === 'string' ? { name: req.body.name } : {}),
+        ...(req.get('user-agent') ? { userAgent: req.get('user-agent') } : {}),
       });
 
       ApiResponse.created(res, data, MESSAGES.REGISTERED);
@@ -23,12 +24,45 @@ export class AuthController {
       const data = await authService.login({
         email: String(req.body.email),
         password: String(req.body.password),
+        ...(req.get('user-agent') ? { userAgent: req.get('user-agent') } : {}),
       });
 
       ApiResponse.success({
         res,
         data,
         message: MESSAGES.LOGIN_SUCCESS,
+      });
+    },
+  );
+
+  public refresh = asyncHandler(
+    async (req: Request, res: Response): Promise<void> => {
+      const refreshToken = String(req.body.refreshToken ?? '');
+      if (!refreshToken) {
+        throw ApiError.badRequest('refreshToken is required');
+      }
+
+      const data = await authService.refresh(
+        refreshToken,
+        req.get('user-agent') ?? null,
+      );
+      ApiResponse.success({
+        res,
+        data,
+        message: MESSAGES.SUCCESS,
+      });
+    },
+  );
+
+  public logout = asyncHandler(
+    async (req: Request, res: Response): Promise<void> => {
+      const refreshToken =
+        typeof req.body.refreshToken === 'string' ? req.body.refreshToken : null;
+      const data = await authService.logout(refreshToken);
+      ApiResponse.success({
+        res,
+        data,
+        message: MESSAGES.SUCCESS,
       });
     },
   );

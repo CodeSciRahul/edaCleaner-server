@@ -75,7 +75,8 @@ export const env: EnvConfig = Object.freeze({
   BODY_LIMIT: getEnv('BODY_LIMIT', '10mb'),
   LOG_LEVEL: getEnv('LOG_LEVEL', 'dev'),
   JWT_SECRET: getEnv('JWT_SECRET'),
-  JWT_EXPIRES_IN: getEnv('JWT_EXPIRES_IN', '7d'),
+  JWT_EXPIRES_IN: getEnv('JWT_EXPIRES_IN', '1h'),
+  JWT_REFRESH_EXPIRES_IN: getEnv('JWT_REFRESH_EXPIRES_IN', '30d'),
   AWS: {
     AWS_S3_BUCKET_NAME: getEnv('AWS_S3_BUCKET_NAME'),
     AWS_S3_ACCESS_KEY_ID: getEnv('AWS_S3_ACCESS_KEY_ID'),

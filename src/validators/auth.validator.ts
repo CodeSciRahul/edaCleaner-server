@@ -18,3 +18,17 @@ export const loginRules = [
   body('email').isEmail().withMessage('Valid email is required').normalizeEmail(),
   body('password').isString().notEmpty().withMessage('Password is required'),
 ];
+
+export const refreshRules = [
+  body('refreshToken')
+    .isString()
+    .notEmpty()
+    .withMessage('refreshToken is required'),
+];
+
+export const logoutRules = [
+  body('refreshToken')
+    .optional({ nullable: true })
+    .isString()
+    .withMessage('refreshToken must be a string'),
+];

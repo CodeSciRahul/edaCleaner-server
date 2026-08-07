@@ -30,6 +30,7 @@ export interface EnvConfig {
   LOG_LEVEL: string;
   JWT_SECRET: string;
   JWT_EXPIRES_IN: string;
+  JWT_REFRESH_EXPIRES_IN: string;
   AWS: AwsEnvConfig;
   STRIPE: StripeEnvConfig;
 }

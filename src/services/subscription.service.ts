@@ -6,6 +6,7 @@ import SubscriptionHistoryModel from '../models/subscriptionHistory.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { MESSAGES, PLAN_RANK, isPaidPlan, isPlanSlug } from '../constants/index.js';
 import type { PlanSlug, SubscriptionStatus } from '../constants/plans.js';
+import { listAccessibleFeatures } from '../constants/entitlements.js';
 import { planService } from './plan.service.js';
 import {
   getSubscriptionPeriod,
@@ -90,6 +91,8 @@ export class SubscriptionService {
       ? await planService.getByStripePriceId(sub.stripePriceId)
       : null;
 
+    const hasActiveAccess = this.hasActiveAccess(sub.status, sub.currentPlan);
+
     return {
       currentPlan: sub.currentPlan,
       status: sub.status,
@@ -101,9 +104,10 @@ export class SubscriptionService {
       currentPeriodEnd: sub.currentPeriodEnd,
       features: plan.features,
       isPaid: isPaidPlan(sub.currentPlan),
-      hasActiveAccess: this.hasActiveAccess(sub.status, sub.currentPlan),
+      hasActiveAccess,
       billingInterval: pricedPlan?.billingInterval ?? 'month',
       stripePriceId: sub.stripePriceId,
+      entitlements: listAccessibleFeatures(sub.currentPlan, hasActiveAccess),
     };
   }
 
@@ -168,11 +172,9 @@ export class SubscriptionService {
 
     const customerId = await this.ensureStripeCustomer(userId);
 
-    const trialEligible =
-      plan.isTrialAvailable && plan.trialDays > 0 && !user.trialUsed;
-
-    // Unique per attempt. A static key breaks when success_url / trial / integration
-    // params change (Stripe requires identical bodies for the same idempotency key).
+    // Charge immediately on Checkout. Auto-trials produce a $0 invoice and look
+    // like a failed payment in the Plan screen — trial can be re-enabled later
+    // via an explicit opt-in flag if product needs it.
     const idempotencyKey = `checkout:${userId}:${plan.slug}:${plan.stripePriceId}:${randomUUID()}`;
 
     const session = await stripeService.createCheckoutSession({
@@ -180,7 +182,6 @@ export class SubscriptionService {
       priceId: plan.stripePriceId,
       userId,
       planSlug: plan.slug,
-      ...(trialEligible ? { trialDays: plan.trialDays } : {}),
       idempotencyKey,
     });
 
@@ -188,7 +189,7 @@ export class SubscriptionService {
       userId,
       plan: plan.slug,
       sessionId: session.id,
-      trial: trialEligible,
+      trial: false,
     });
 
     await this.recordHistory({
@@ -197,7 +198,7 @@ export class SubscriptionService {
       fromPlan: sub.currentPlan,
       toPlan: plan.slug,
       message: `Checkout session created for ${plan.name}`,
-      metadata: { sessionId: session.id, trialEligible },
+      metadata: { sessionId: session.id, trialEligible: false },
     });
 
     return {
@@ -387,30 +388,88 @@ export class SubscriptionService {
   }
 
   async getHistory(userId: string, limit = 50) {
-    return SubscriptionHistoryModel.find({ userId })
+    const rows = await SubscriptionHistoryModel.find({ userId })
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
+
+    return rows.map((row) => ({
+      id: String(row._id),
+      eventType: row.eventType,
+      fromPlan: row.fromPlan,
+      toPlan: row.toPlan,
+      message: row.message,
+      createdAt:
+        row.createdAt instanceof Date
+          ? row.createdAt.toISOString()
+          : new Date(row.createdAt).toISOString(),
+    }));
   }
 
   async getInvoices(userId: string) {
     const sub = await this.getOrCreateForUser(userId);
     const customerId =
-      sub.stripeCustomerId ?? (await this.ensureStripeCustomer(userId));
+      sub.stripeCustomerId ??
+      (await UserModel.findById(userId).then((u) => u?.stripeCustomerId ?? null));
 
+    // Do not create a Stripe customer just to list invoices — empty for Free.
     if (!customerId) {
       return [];
     }
 
     const invoices = await stripeService.listInvoices({ customerId });
-    return invoices.map((invoice) => ({
+    return invoices.map((invoice) => this.toPublicInvoice(invoice));
+  }
+
+  toPublicInvoice(invoice: Stripe.Invoice) {
+    const amountPaid = invoice.amount_paid ?? 0;
+    const amountDue = invoice.amount_due ?? 0;
+    const total = invoice.total ?? 0;
+    const subtotal = invoice.subtotal ?? 0;
+    const lineAmount = (invoice.lines?.data ?? []).reduce(
+      (sum, line) => sum + (line.amount ?? 0),
+      0,
+    );
+
+    // Prefer what was actually charged; fall back to invoice totals.
+    const displayAmount =
+      amountPaid > 0
+        ? amountPaid
+        : total > 0
+          ? total
+          : amountDue > 0
+            ? amountDue
+            : subtotal > 0
+              ? subtotal
+              : Math.max(lineAmount, 0);
+
+    const billingReason = invoice.billing_reason ?? null;
+    const isTrialInvoice =
+      amountPaid === 0 &&
+      total === 0 &&
+      (billingReason === 'subscription_create' ||
+        billingReason === 'subscription_update' ||
+        lineAmount !== 0);
+
+    return {
       id: invoice.id,
+      number: invoice.number,
       status: invoice.status,
-      amountDue: invoice.amount_due,
-      amountPaid: invoice.amount_paid,
+      amountDue,
+      amountPaid,
+      total,
+      subtotal,
+      lineAmount,
+      displayAmount,
+      isTrialInvoice,
+      billingReason,
       currency: invoice.currency,
       hostedInvoiceUrl: invoice.hosted_invoice_url,
       invoicePdf: invoice.invoice_pdf,
+      description:
+        invoice.description ??
+        invoice.lines?.data?.[0]?.description ??
+        null,
       created: invoice.created
         ? new Date(invoice.created * 1000).toISOString()
         : null,
@@ -420,7 +479,10 @@ export class SubscriptionService {
       periodEnd: invoice.period_end
         ? new Date(invoice.period_end * 1000).toISOString()
         : null,
-    }));
+      paidAt: invoice.status_transitions?.paid_at
+        ? new Date(invoice.status_transitions.paid_at * 1000).toISOString()
+        : null,
+    };
   }
 
   async createBillingPortal(userId: string) {

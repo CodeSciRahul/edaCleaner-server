@@ -156,10 +156,42 @@ export class WebhookService {
         (session.metadata?.planSlug as 'pro' | 'premium' | undefined) ?? null,
     });
 
+    // Subscription Checkout always produces a latest_invoice on Stripe.
+    const latestInvoiceId =
+      typeof subscription.latest_invoice === 'string'
+        ? subscription.latest_invoice
+        : subscription.latest_invoice?.id ?? null;
+
+    if (latestInvoiceId) {
+      try {
+        const invoice = await stripeService.retrieveInvoice(latestInvoiceId);
+        logger.info('Checkout invoice ready', {
+          userId,
+          sessionId: session.id,
+          invoiceId: invoice.id,
+          status: invoice.status,
+          amountPaid: invoice.amount_paid,
+          hostedInvoiceUrl: invoice.hosted_invoice_url,
+        });
+      } catch (error) {
+        logger.warn('Could not retrieve checkout invoice', {
+          latestInvoiceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    } else {
+      logger.warn('Checkout completed without latest_invoice', {
+        userId,
+        sessionId: session.id,
+        subscriptionId,
+      });
+    }
+
     logger.info('Checkout completed', {
       userId,
       sessionId: session.id,
       subscriptionId,
+      invoiceId: latestInvoiceId,
     });
   }
 
@@ -185,7 +217,13 @@ export class WebhookService {
       }
     ).subscription;
 
-    if (!subscriptionRef) return;
+    if (!subscriptionRef) {
+      logger.info('Non-subscription invoice paid', {
+        invoiceId: invoice.id,
+        amountPaid: invoice.amount_paid,
+      });
+      return;
+    }
 
     const subscriptionId =
       typeof subscriptionRef === 'string' ? subscriptionRef : subscriptionRef.id;
@@ -193,15 +231,23 @@ export class WebhookService {
     const subscription =
       await stripeService.retrieveSubscription(subscriptionId);
 
+    const amountLabel =
+      typeof invoice.amount_paid === 'number'
+        ? `${(invoice.amount_paid / 100).toFixed(2)} ${(invoice.currency ?? 'usd').toUpperCase()}`
+        : 'payment';
+
     await subscriptionService.syncFromStripeSubscription(subscription, {
       eventType: 'invoice.payment_succeeded',
-      message: 'Invoice payment succeeded',
+      message: `Invoice paid (${invoice.number ?? invoice.id}) — ${amountLabel}`,
       stripeEventId: eventId,
     });
 
     logger.info('Payment success', {
       invoiceId: invoice.id,
+      invoiceNumber: invoice.number,
       subscriptionId,
+      amountPaid: invoice.amount_paid,
+      hostedInvoiceUrl: invoice.hosted_invoice_url,
     });
   }
 

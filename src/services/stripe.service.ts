@@ -111,6 +111,8 @@ export class StripeService {
         subscriptionData.trial_period_days = params.trialDays;
       }
 
+      // mode=subscription: Stripe creates + finalizes an Invoice on each
+      // successful payment (initial charge and renewals).
       return await stripe.checkout.sessions.create(
         {
           mode: 'subscription',
@@ -126,6 +128,10 @@ export class StripeService {
           subscription_data: subscriptionData,
           allow_promotion_codes: true,
           billing_address_collection: 'auto',
+          customer_update: {
+            address: 'auto',
+            name: 'auto',
+          },
           integration_identifier: integrationIdentifierFromKey(params.idempotencyKey),
         },
         { idempotencyKey: params.idempotencyKey },
@@ -186,14 +192,18 @@ export class StripeService {
     userId: string;
   }): Promise<Stripe.Subscription> {
     try {
+      // always_invoice: create + attempt to pay a Stripe Invoice immediately
+      // for the prorated upgrade (visible in Dashboard → Invoices).
+      // Do NOT mix pending_if_incomplete with cancel_at_period_end — Stripe rejects it.
       return await stripe.subscriptions.update(params.subscriptionId, {
         items: [{ id: params.itemId, price: params.newPriceId }],
-        proration_behavior: 'create_prorations',
-        cancel_at_period_end: false,
+        proration_behavior: 'always_invoice',
+        payment_behavior: 'error_if_incomplete',
         metadata: {
           userId: params.userId,
           planSlug: params.planSlug,
         },
+        expand: ['latest_invoice'],
       });
     } catch (error) {
       throw toStripeError(error);
@@ -300,16 +310,44 @@ export class StripeService {
     }
   }
 
+  /**
+   * Fetch every invoice for a Stripe customer (paginated).
+   * Expands line items so Plan UI can show list price even on $0 trial invoices.
+   */
   async listInvoices(params: {
     customerId: string;
-    limit?: number;
+    /** Soft cap to avoid runaway loops (default 100). */
+    max?: number;
   }): Promise<Stripe.Invoice[]> {
     try {
-      const invoices = await stripe.invoices.list({
-        customer: params.customerId,
-        limit: params.limit ?? 20,
-      });
-      return invoices.data;
+      const max = Math.min(Math.max(params.max ?? 100, 1), 500);
+      const collected: Stripe.Invoice[] = [];
+      let startingAfter: string | undefined;
+
+      while (collected.length < max) {
+        const pageSize = Math.min(100, max - collected.length);
+        const page = await stripe.invoices.list({
+          customer: params.customerId,
+          limit: pageSize,
+          expand: ['data.lines'],
+          ...(startingAfter ? { starting_after: startingAfter } : {}),
+        });
+
+        collected.push(...page.data);
+        if (!page.has_more || page.data.length === 0) break;
+        startingAfter = page.data[page.data.length - 1]?.id;
+        if (!startingAfter) break;
+      }
+
+      return collected;
+    } catch (error) {
+      throw toStripeError(error);
+    }
+  }
+
+  async retrieveInvoice(invoiceId: string): Promise<Stripe.Invoice> {
+    try {
+      return await stripe.invoices.retrieve(invoiceId);
     } catch (error) {
       throw toStripeError(error);
     }

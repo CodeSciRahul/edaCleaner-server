@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { subscriptionController } from '../../controllers/subscription.controller.js';
 import { authenticate } from '../../middlewares/auth.middleware.js';
+import { requireMinPlan } from '../../middlewares/entitlement.middleware.js';
 import { validateRequest } from '../../middlewares/validate.middleware.js';
 import {
   cancelRules,
@@ -16,7 +17,11 @@ subscriptionRouter.get('/', subscriptionController.getSubscription);
 subscriptionRouter.get('/status', subscriptionController.getStatus);
 subscriptionRouter.get('/history', subscriptionController.history);
 subscriptionRouter.get('/invoices', subscriptionController.invoices);
-subscriptionRouter.get('/billing-portal', subscriptionController.billingPortal);
+subscriptionRouter.get(
+  '/billing-portal',
+  requireMinPlan('pro'),
+  subscriptionController.billingPortal,
+);
 
 subscriptionRouter.post(
   '/checkout',

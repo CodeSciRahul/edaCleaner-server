@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { env } from '../config/env.js';
 import UserModel from '../models/user.model.js';
 import UserSubscriptionModel from '../models/userSubscription.model.js';
@@ -165,7 +166,9 @@ export class SubscriptionService {
     const trialEligible =
       plan.isTrialAvailable && plan.trialDays > 0 && !user.trialUsed;
 
-    const idempotencyKey = `checkout:${userId}:${plan.slug}:${plan.stripePriceId}`;
+    // Unique per attempt. A static key breaks when success_url / trial / integration
+    // params change (Stripe requires identical bodies for the same idempotency key).
+    const idempotencyKey = `checkout:${userId}:${plan.slug}:${plan.stripePriceId}:${randomUUID()}`;
 
     const session = await stripeService.createCheckoutSession({
       customerId,

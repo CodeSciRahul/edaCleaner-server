@@ -93,7 +93,7 @@ export const env: EnvConfig = Object.freeze({
     STRIPE_PREMIUM_PRODUCT_ID: getEnv('STRIPE_PREMIUM_PRODUCT_ID', ''),
     STRIPE_SUCCESS_URL: getEnv(
       'STRIPE_SUCCESS_URL',
-      'http://localhost:3000/pricing?checkout=success',
+      'http://localhost:3000/pricing?checkout=success&session_id={CHECKOUT_SESSION_ID}',
     ),
     STRIPE_CANCEL_URL: getEnv(
       'STRIPE_CANCEL_URL',

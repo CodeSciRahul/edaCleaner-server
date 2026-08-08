@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import type Stripe from 'stripe';
 import { stripe } from '../config/stripe.js';
 import { env } from '../config/env.js';
@@ -68,14 +67,10 @@ export function getSubscriptionPriceIds(subscription: Stripe.Subscription): {
   };
 }
 
-function randomIntegrationSuffix(): string {
-  const alphabet = 'abcdefghijklmnopqrstuvwxyz';
-  let out = '';
-  const bytes = randomBytes(8);
-  for (let i = 0; i < 8; i += 1) {
-    out += alphabet[(bytes[i] ?? 0) % alphabet.length];
-  }
-  return out;
+function integrationIdentifierFromKey(idempotencyKey: string): string {
+  // Stripe integration_identifier must stay stable for a given idempotent request.
+  const compact = idempotencyKey.replace(/[^a-zA-Z0-9]/g, '').slice(-24) || 'checkout';
+  return `edacleaner_checkout_${compact}`;
 }
 
 export class StripeService {
@@ -131,7 +126,7 @@ export class StripeService {
           subscription_data: subscriptionData,
           allow_promotion_codes: true,
           billing_address_collection: 'auto',
-          integration_identifier: `edacleaner_checkout_${randomIntegrationSuffix()}`,
+          integration_identifier: integrationIdentifierFromKey(params.idempotencyKey),
         },
         { idempotencyKey: params.idempotencyKey },
       );

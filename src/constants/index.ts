@@ -4,10 +4,15 @@ export {
   PLAN_CATALOG,
   PLAN_RANK,
   PLAN_SLUGS,
+  BILLING_INTERVALS,
   isPaidPlan,
   isPlanSlug,
+  isBillingInterval,
+  monthlyCatalogPriceCents,
+  annualCompareAtCents,
+  annualDiscountPercent,
 } from './plans.js';
-export type { PlanSlug, SubscriptionStatus } from './plans.js';
+export type { PlanSlug, SubscriptionStatus, BillingInterval } from './plans.js';
 
 export const MESSAGES = {
   SUCCESS: 'Request completed successfully',

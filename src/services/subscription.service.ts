@@ -86,6 +86,9 @@ export class SubscriptionService {
   async getStatus(userId: string) {
     const sub = await this.getOrCreateForUser(userId);
     const plan = await planService.getBySlug(sub.currentPlan);
+    const pricedPlan = sub.stripePriceId
+      ? await planService.getByStripePriceId(sub.stripePriceId)
+      : null;
 
     return {
       currentPlan: sub.currentPlan,
@@ -99,6 +102,8 @@ export class SubscriptionService {
       features: plan.features,
       isPaid: isPaidPlan(sub.currentPlan),
       hasActiveAccess: this.hasActiveAccess(sub.status, sub.currentPlan),
+      billingInterval: pricedPlan?.billingInterval ?? 'month',
+      stripePriceId: sub.stripePriceId,
     };
   }
 
@@ -257,16 +262,25 @@ export class SubscriptionService {
     if (!isPlanSlug(targetPlan.slug)) {
       throw ApiError.badRequest('Invalid plan');
     }
+    if (isPaidPlan(targetPlan.slug) && !targetPlan.stripePriceId) {
+      throw ApiError.badRequest('Plan is missing a Stripe price configuration');
+    }
 
     const sub = await this.getOrCreateForUser(userId);
     const from = sub.currentPlan;
     const to = targetPlan.slug;
 
-    if (from === to && !sub.cancelAtPeriodEnd && !sub.pendingPlan) {
+    // Same Stripe price = already on this exact plan/interval
+    if (
+      targetPlan.stripePriceId &&
+      sub.stripePriceId === targetPlan.stripePriceId &&
+      !sub.cancelAtPeriodEnd &&
+      !sub.pendingPlan
+    ) {
       throw ApiError.badRequest('Already on the selected plan');
     }
 
-    // Free → Paid: checkout
+    // Free → Paid (monthly or yearly): checkout
     if (!isPaidPlan(from) && isPaidPlan(to)) {
       return {
         mode: 'checkout' as const,
@@ -297,7 +311,14 @@ export class SubscriptionService {
       throw ApiError.badRequest('Unable to resolve Stripe price items');
     }
 
-    const isUpgrade = PLAN_RANK[to] > PLAN_RANK[from];
+    const currentPlanDoc = await planService.getByStripePriceId(currentPriceId);
+    const currentAmount = currentPlanDoc?.monthlyPrice ?? 0;
+    const targetAmount = targetPlan.monthlyPrice;
+
+    // Tier upgrade, or same-tier switch to a higher-priced interval (e.g. monthly → yearly)
+    const isUpgrade =
+      PLAN_RANK[to] > PLAN_RANK[from] ||
+      (PLAN_RANK[to] === PLAN_RANK[from] && targetAmount > currentAmount);
 
     if (isUpgrade) {
       const updated = await stripeService.upgradeSubscriptionImmediate({
@@ -310,19 +331,24 @@ export class SubscriptionService {
 
       await this.syncFromStripeSubscription(updated, {
         eventType: 'subscription.upgraded',
-        message: `Upgraded from ${from} to ${to}`,
+        message: `Upgraded from ${from} to ${to} (${targetPlan.billingInterval})`,
         fromPlan: from,
         toPlan: to,
       });
 
-      logger.info('Subscription upgraded', { userId, from, to });
+      logger.info('Subscription upgraded', {
+        userId,
+        from,
+        to,
+        interval: targetPlan.billingInterval,
+      });
       return {
         mode: 'immediate' as const,
         ...(await this.getStatus(userId)),
       };
     }
 
-    // Paid → lower paid: schedule at period end
+    // Paid → lower paid / lower interval price: schedule at period end
     const schedule = await stripeService.scheduleDowngradeAtPeriodEnd({
       subscriptionId: sub.stripeSubscriptionId,
       currentPriceId,
@@ -341,11 +367,19 @@ export class SubscriptionService {
       fromPlan: from,
       toPlan: to,
       stripeSubscriptionId: sub.stripeSubscriptionId,
-      message: `Downgrade to ${to} scheduled at period end`,
-      metadata: { scheduleId: schedule.id },
+      message: `Downgrade to ${to} (${targetPlan.billingInterval}) scheduled at period end`,
+      metadata: {
+        scheduleId: schedule.id,
+        billingInterval: targetPlan.billingInterval,
+      },
     });
 
-    logger.info('Subscription downgrade scheduled', { userId, from, to });
+    logger.info('Subscription downgrade scheduled', {
+      userId,
+      from,
+      to,
+      interval: targetPlan.billingInterval,
+    });
     return {
       mode: 'scheduled' as const,
       ...(await this.getStatus(userId)),

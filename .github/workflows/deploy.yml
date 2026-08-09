@@ -1,0 +1,59 @@
+name: EdaCleaner Server CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # package.json mein "lint" nahi hai — typecheck use karo
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy on EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/edaCleaner/edaCleaner-server
+            echo "Deploy cwd: $(pwd)"
+            git fetch origin main
+            git reset --hard origin/main
+            echo "Deployed commit: $(git log -1 --oneline)"
+            npm ci
+            npm run build
+            pm2 delete edaCleanerServer || true
+            pm2 start npm --name edaCleanerServer -- start
+            pm2 save
+            pm2 show edaCleanerServer | grep -E "exec cwd|status|script path" || true

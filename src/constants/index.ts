@@ -1,5 +1,18 @@
 export { HTTP_STATUS } from './httpStatus.js';
 export type { HttpStatusCode } from './httpStatus.js';
+export {
+  PLAN_CATALOG,
+  PLAN_RANK,
+  PLAN_SLUGS,
+  BILLING_INTERVALS,
+  isPaidPlan,
+  isPlanSlug,
+  isBillingInterval,
+  monthlyCatalogPriceCents,
+  annualCompareAtCents,
+  annualDiscountPercent,
+} from './plans.js';
+export type { PlanSlug, SubscriptionStatus, BillingInterval } from './plans.js';
 
 export const MESSAGES = {
   SUCCESS: 'Request completed successfully',
@@ -24,4 +37,18 @@ export const MESSAGES = {
   VERSION_NOT_FOUND: 'Version not found',
   VERSION_DELETED: 'Version deleted successfully',
   DOWNLOAD_URL_CREATED: 'Download URL created successfully',
+  REGISTERED: 'Account created successfully',
+  LOGIN_SUCCESS: 'Logged in successfully',
+  PLAN_NOT_FOUND: 'Plan not found',
+  SUBSCRIPTION_NOT_FOUND: 'Subscription not found',
+  CHECKOUT_CREATED: 'Checkout session created successfully',
+  BILLING_PORTAL_CREATED: 'Billing portal session created successfully',
+  SUBSCRIPTION_CANCELED: 'Subscription cancellation scheduled',
+  SUBSCRIPTION_CANCELED_IMMEDIATE: 'Subscription canceled',
+  SUBSCRIPTION_REACTIVATED: 'Subscription reactivated successfully',
+  PLAN_CHANGED: 'Subscription plan change applied',
+  ALREADY_SUBSCRIBED: 'An active paid subscription already exists',
+  TRIAL_ALREADY_USED: 'Free trial has already been used for this account',
+  INVALID_WEBHOOK: 'Invalid Stripe webhook signature',
+  STRIPE_ERROR: 'Stripe request failed',
 } as const;

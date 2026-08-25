@@ -49,6 +49,23 @@ export class SubscriptionController {
     },
   );
 
+  public guestCheckout = asyncHandler(
+    async (req: Request, res: Response): Promise<void> => {
+      const data = await subscriptionService.createGuestCheckout(
+        String(req.body.planId),
+      );
+
+      ApiResponse.success({
+        res,
+        data: {
+          mode: 'checkout' as const,
+          ...data,
+        },
+        message: MESSAGES.CHECKOUT_CREATED,
+      });
+    },
+  );
+
   public cancel = asyncHandler(
     async (req: Request, res: Response): Promise<void> => {
       const userId = requireUserId(req);

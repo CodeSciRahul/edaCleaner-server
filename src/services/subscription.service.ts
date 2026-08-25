@@ -208,6 +208,35 @@ export class SubscriptionService {
     };
   }
 
+  async createGuestCheckout(planId: string) {
+    const plan = await planService.getById(planId);
+    if (!isPlanSlug(plan.slug) || !isPaidPlan(plan.slug)) {
+      throw ApiError.badRequest('Checkout is only available for Pro and Premium');
+    }
+    if (!plan.stripePriceId) {
+      throw ApiError.badRequest('Plan is missing a Stripe price configuration');
+    }
+
+    const idempotencyKey = `guest-checkout:${plan.slug}:${plan.stripePriceId}:${randomUUID()}`;
+    const session = await stripeService.createGuestCheckoutSession({
+      priceId: plan.stripePriceId,
+      planSlug: plan.slug,
+      idempotencyKey,
+    });
+
+    logger.info('Guest checkout session created', {
+      plan: plan.slug,
+      sessionId: session.id,
+    });
+
+    return {
+      sessionId: session.id,
+      url: session.url,
+      publishableKey: env.STRIPE.STRIPE_PUBLISHABLE_KEY,
+      guest: true as const,
+    };
+  }
+
   async cancel(
     userId: string,
     options: { immediate?: boolean } = {},

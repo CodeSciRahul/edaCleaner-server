@@ -141,6 +141,57 @@ export class StripeService {
     }
   }
 
+  async createGuestCheckoutSession(params: {
+    priceId: string;
+    planSlug: string;
+    idempotencyKey: string;
+  }): Promise<Stripe.Checkout.Session> {
+    try {
+      return await stripe.checkout.sessions.create(
+        {
+          mode: 'subscription',
+          billing_address_collection: 'auto',
+          line_items: [{ price: params.priceId, quantity: 1 }],
+          success_url: env.STRIPE.STRIPE_SUCCESS_URL,
+          cancel_url: env.STRIPE.STRIPE_CANCEL_URL,
+          metadata: {
+            guest: 'true',
+            planSlug: params.planSlug,
+          },
+          subscription_data: {
+            metadata: {
+              guest: 'true',
+              planSlug: params.planSlug,
+            },
+          },
+          allow_promotion_codes: true,
+          integration_identifier: integrationIdentifierFromKey(params.idempotencyKey),
+        },
+        { idempotencyKey: params.idempotencyKey },
+      );
+    } catch (error) {
+      throw toStripeError(error);
+    }
+  }
+
+  async attachUserToStripeObjects(params: {
+    userId: string;
+    planSlug: string;
+    customerId: string;
+    subscriptionId: string;
+  }): Promise<void> {
+    const metadata = {
+      userId: params.userId,
+      planSlug: params.planSlug,
+    };
+    try {
+      await stripe.customers.update(params.customerId, { metadata });
+      await stripe.subscriptions.update(params.subscriptionId, { metadata });
+    } catch (error) {
+      throw toStripeError(error);
+    }
+  }
+
   async createBillingPortalSession(params: {
     customerId: string;
     returnUrl?: string;
@@ -150,6 +201,16 @@ export class StripeService {
         customer: params.customerId,
         return_url: params.returnUrl ?? env.STRIPE.STRIPE_CANCEL_URL,
       });
+    } catch (error) {
+      throw toStripeError(error);
+    }
+  }
+
+  async retrieveCustomer(
+    customerId: string,
+  ): Promise<Stripe.Customer | Stripe.DeletedCustomer> {
+    try {
+      return await stripe.customers.retrieve(customerId);
     } catch (error) {
       throw toStripeError(error);
     }

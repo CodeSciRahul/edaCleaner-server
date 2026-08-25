@@ -51,4 +51,7 @@ export const MESSAGES = {
   TRIAL_ALREADY_USED: 'Free trial has already been used for this account',
   INVALID_WEBHOOK: 'Invalid Stripe webhook signature',
   STRIPE_ERROR: 'Stripe request failed',
+  OTP_SENT: 'A verification code was sent to your email',
+  OTP_VERIFIED: 'Logged in successfully',
+  PASSWORD_SET: 'Password saved',
 } as const;

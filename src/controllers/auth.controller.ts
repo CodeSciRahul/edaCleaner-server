@@ -23,14 +23,76 @@ export class AuthController {
     async (req: Request, res: Response): Promise<void> => {
       const data = await authService.login({
         email: String(req.body.email),
-        password: String(req.body.password),
+        ...(typeof req.body.password === 'string' ? { password: req.body.password } : {}),
         ...(req.get('user-agent') ? { userAgent: req.get('user-agent') } : {}),
       });
+
+      if ('requiresOtp' in data && data.requiresOtp) {
+        ApiResponse.success({
+          res,
+          data,
+          message: MESSAGES.OTP_SENT,
+        });
+        return;
+      }
+
+      if ('requiresPassword' in data && data.requiresPassword) {
+        ApiResponse.success({
+          res,
+          data,
+          message: 'Password required',
+        });
+        return;
+      }
 
       ApiResponse.success({
         res,
         data,
         message: MESSAGES.LOGIN_SUCCESS,
+      });
+    },
+  );
+
+  public requestOtp = asyncHandler(
+    async (req: Request, res: Response): Promise<void> => {
+      const data = await authService.sendLoginOtp(String(req.body.email));
+      ApiResponse.success({
+        res,
+        data,
+        message: MESSAGES.OTP_SENT,
+      });
+    },
+  );
+
+  public verifyOtp = asyncHandler(
+    async (req: Request, res: Response): Promise<void> => {
+      const data = await authService.verifyLoginOtp({
+        email: String(req.body.email),
+        code: String(req.body.code),
+        userAgent: req.get('user-agent') ?? null,
+      });
+
+      ApiResponse.success({
+        res,
+        data,
+        message: MESSAGES.OTP_VERIFIED,
+      });
+    },
+  );
+
+  public setPassword = asyncHandler(
+    async (req: Request, res: Response): Promise<void> => {
+      if (!req.user?.id) {
+        throw ApiError.unauthorized(MESSAGES.UNAUTHORIZED);
+      }
+      const data = await authService.setPassword(
+        req.user.id,
+        String(req.body.password),
+      );
+      ApiResponse.success({
+        res,
+        data,
+        message: MESSAGES.PASSWORD_SET,
       });
     },
   );

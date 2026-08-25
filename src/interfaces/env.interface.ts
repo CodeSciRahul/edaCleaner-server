@@ -21,6 +21,11 @@ export interface StripeEnvConfig {
   STRIPE_CANCEL_URL: string;
 }
 
+export interface MailEnvConfig {
+  RESEND_API_KEY: string;
+  MAIL_FROM: string;
+}
+
 export interface EnvConfig {
   NODE_ENV: NodeEnvironment;
   PORT: number;
@@ -35,4 +40,5 @@ export interface EnvConfig {
   JWT_REFRESH_EXPIRES_IN: string;
   AWS: AwsEnvConfig;
   STRIPE: StripeEnvConfig;
+  MAIL: MailEnvConfig;
 }

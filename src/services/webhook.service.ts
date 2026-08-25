@@ -3,6 +3,7 @@ import WebhookEventModel from '../models/webhookEvent.model.js';
 import UserModel from '../models/user.model.js';
 import { stripeService } from './stripe.service.js';
 import { subscriptionService } from './subscription.service.js';
+import { authService } from './auth.service.js';
 import { logger } from '../utils/logger.js';
 import { ApiError } from '../utils/ApiError.js';
 
@@ -45,6 +46,11 @@ export class WebhookService {
 
   private async dispatch(event: Stripe.Event): Promise<void> {
     switch (event.type) {
+      case 'customer.created':
+      case 'customer.updated':
+        await this.onStripeCustomer(event.data.object as Stripe.Customer);
+        break;
+
       case 'checkout.session.completed':
         await this.onCheckoutCompleted(
           event.data.object as Stripe.Checkout.Session,
@@ -116,11 +122,27 @@ export class WebhookService {
     }
   }
 
+  private async onStripeCustomer(customer: Stripe.Customer): Promise<void> {
+    if ('deleted' in customer && customer.deleted) {
+      return;
+    }
+
+    const { user, created } = await authService.ensureUserFromStripeCustomer(
+      customer,
+    );
+    logger.info('Stripe customer synced to account', {
+      customerId: customer.id,
+      userId: user?.id ?? null,
+      created,
+      hasEmail: Boolean(customer.email),
+    });
+  }
+
   private async onCheckoutCompleted(
     session: Stripe.Checkout.Session,
     eventId: string,
   ): Promise<void> {
-    const userId =
+    let userId =
       session.metadata?.userId ??
       session.client_reference_id ??
       null;
@@ -134,10 +156,37 @@ export class WebhookService {
         ? session.subscription
         : session.subscription.id;
 
+    const customerId =
+      typeof session.customer === 'string'
+        ? session.customer
+        : session.customer?.id ?? null;
+
+    const checkoutEmail =
+      session.customer_details?.email ?? session.customer_email ?? null;
+
+    if (!userId && checkoutEmail && customerId) {
+      const { user } = await authService.ensureUserFromCheckoutEmail(
+        checkoutEmail,
+        customerId,
+      );
+      userId = user.id;
+      const planSlug = session.metadata?.planSlug ?? 'pro';
+      await stripeService.attachUserToStripeObjects({
+        userId,
+        planSlug,
+        customerId,
+        subscriptionId,
+      });
+    } else if (!userId) {
+      logger.warn('Checkout completed without user or email', {
+        sessionId: session.id,
+        guest: session.metadata?.guest === 'true',
+      });
+    }
+
     const subscription = await stripeService.retrieveSubscription(subscriptionId);
 
     if (userId && !subscription.metadata.userId) {
-      // Ensure metadata is present for future syncs
       subscription.metadata.userId = userId;
       if (session.metadata?.planSlug) {
         subscription.metadata.planSlug = session.metadata.planSlug;

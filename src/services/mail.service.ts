@@ -1,8 +1,7 @@
 import { env } from '../config/env.js';
 import { ApiError } from '../utils/ApiError.js';
 import { logger } from '../utils/logger.js';
-
-const MAIL_FROM = 'EDA Cleaner <onboarding@edacleaner.com>';
+import { buildLoginOtpEmail } from './mail-templates.js';
 
 interface SendEmailParams {
   to: string;
@@ -24,7 +23,7 @@ export class MailService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: MAIL_FROM,
+        from: env.MAIL.MAIL_FROM,
         to: [params.to],
         subject: params.subject,
         text: params.text,
@@ -45,11 +44,12 @@ export class MailService {
   }
 
   async sendLoginOtp(email: string, code: string): Promise<void> {
+    const template = buildLoginOtpEmail(code);
     await this.send({
       to: email,
-      subject: 'Your EDA Cleaner login code',
-      text: `Your EDA Cleaner verification code is ${code}. It expires in 10 minutes.`,
-      html: `<p>Your EDA Cleaner verification code is <strong>${code}</strong>.</p><p>It expires in 10 minutes. If you did not request this, you can ignore this email.</p>`,
+      subject: template.subject,
+      text: template.text,
+      html: template.html,
     });
   }
 }

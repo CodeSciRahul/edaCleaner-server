@@ -16,6 +16,10 @@ import {
 import { subscriptionService } from './subscription.service.js';
 import { mailService } from './mail.service.js';
 import { logger } from '../utils/logger.js';
+import {
+  normalizeEmailForStorage,
+  findUserByEmail,
+} from '../utils/email.js';
 
 const BCRYPT_ROUNDS = 12;
 const OTP_TTL_MS = 10 * 60 * 1000;
@@ -39,8 +43,8 @@ type AuthUser = { id: string; email: string; name: string; trialUsed: boolean; m
 
 export class AuthService {
   async register(input: RegisterInput) {
-    const email = input.email.trim().toLowerCase();
-    const existing = await UserModel.findOne({ email }).select('+passwordHash');
+    const email = normalizeEmailForStorage(input.email);
+    const existing = await findUserByEmail(email, { select: '+passwordHash' });
     if (existing) {
       if (existing.mustSetPassword && existing.isActive) {
         existing.passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
@@ -79,7 +83,7 @@ export class AuthService {
   }
 
   async ensureUserFromStripeCustomer(customer: Stripe.Customer) {
-    const email = customer.email?.trim().toLowerCase() ?? '';
+    const email = normalizeEmailForStorage(customer.email ?? '');
     if (!email) {
       logger.info('Stripe customer has no email yet', { customerId: customer.id });
       return { user: null, created: false as const };
@@ -95,8 +99,9 @@ export class AuthService {
     stripeCustomerId: string,
     name = '',
   ) {
-    const normalized = email.trim().toLowerCase();
+    const normalized = normalizeEmailForStorage(email);
     let user = await UserModel.findOne({ stripeCustomerId });
+    logger.info('User found from Stripe customer ID', { userId: user?.id });
     if (user) {
       if (user.email !== normalized) {
         const clash = await UserModel.findOne({ email: normalized });
@@ -108,7 +113,7 @@ export class AuthService {
       return { user, created: false };
     }
 
-    user = await UserModel.findOne({ email: normalized });
+    user = await findUserByEmail(normalized);
     if (user) {
       if (!user.stripeCustomerId) {
         user.stripeCustomerId = stripeCustomerId;
@@ -134,7 +139,7 @@ export class AuthService {
       });
       return { user, created: true };
     } catch {
-      user = await UserModel.findOne({ email: normalized });
+      user = await findUserByEmail(normalized);
       if (!user) {
         throw ApiError.internal('Failed to create account from checkout email');
       }
@@ -147,8 +152,8 @@ export class AuthService {
   }
 
   async login(input: LoginInput) {
-    const email = input.email.trim().toLowerCase();
-    const user = await UserModel.findOne({ email }).select('+passwordHash');
+    const email = normalizeEmailForStorage(input.email);
+    const user = await findUserByEmail(email, { select: '+passwordHash' });
 
     if (!user || !user.isActive) {
       throw ApiError.unauthorized('Invalid email or password');
@@ -173,26 +178,28 @@ export class AuthService {
   }
 
   async sendLoginOtp(email: string) {
-    const normalized = email.trim().toLowerCase();
-    const user = await UserModel.findOne({ email: normalized }).select('+passwordHash');
+    const user = await findUserByEmail(email, { select: '+passwordHash' });
+    const storedEmail = user
+      ? normalizeEmailForStorage(user.email)
+      : normalizeEmailForStorage(email);
     if (!user || !user.isActive || (!user.mustSetPassword && user.passwordHash)) {
-      logger.info('OTP request ignored', { email: normalized });
+      logger.info('OTP request ignored', { email: storedEmail });
       return { requiresOtp: true as const };
     }
 
-    const existing = await LoginOtpModel.findOne({ email: normalized });
+    const existing = await LoginOtpModel.findOne({ email: storedEmail });
     if (existing && Date.now() - existing.sentAt.getTime() < OTP_RESEND_MS) {
       throw ApiError.tooManyRequests('Wait a moment before requesting another code');
     }
 
     const code = String(randomInt(100000, 1000000));
-    const codeHash = this.hashOtp(normalized, code);
+    const codeHash = this.hashOtp(storedEmail, code);
     const now = new Date();
 
     await LoginOtpModel.findOneAndUpdate(
-      { email: normalized },
+      { email: storedEmail },
       {
-        email: normalized,
+        email: storedEmail,
         codeHash,
         expiresAt: new Date(now.getTime() + OTP_TTL_MS),
         attempts: 0,
@@ -201,7 +208,7 @@ export class AuthService {
       { upsert: true, new: true },
     );
 
-    await mailService.sendLoginOtp(normalized, code);
+    await mailService.sendLoginOtp(storedEmail, code);
     logger.info('Login OTP sent', { userId: user.id });
     return { requiresOtp: true as const };
   }
@@ -211,7 +218,12 @@ export class AuthService {
     code: string;
     userAgent?: string | null | undefined;
   }) {
-    const email = input.email.trim().toLowerCase();
+    const user = await findUserByEmail(input.email);
+    if (!user || !user.isActive) {
+      throw ApiError.unauthorized('Invalid or expired verification code');
+    }
+
+    const email = normalizeEmailForStorage(user.email);
     const code = input.code.trim();
     const record = await LoginOtpModel.findOne({ email });
     if (!record) {
@@ -240,11 +252,6 @@ export class AuthService {
     }
 
     await record.deleteOne();
-
-    const user = await UserModel.findOne({ email });
-    if (!user || !user.isActive) {
-      throw ApiError.unauthorized(MESSAGES.UNAUTHORIZED);
-    }
 
     logger.info('Login OTP verified', { userId: user.id });
     return this.buildAuthResponse(this.toAuthUser(user), input.userAgent);

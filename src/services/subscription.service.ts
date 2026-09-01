@@ -14,6 +14,7 @@ import {
   stripeService,
 } from './stripe.service.js';
 import { logger } from '../utils/logger.js';
+import { normalizeEmailForStorage } from '../utils/email.js';
 import type Stripe from 'stripe';
 
 const ACTIVE_PAID_STATUSES: SubscriptionStatus[] = [
@@ -131,7 +132,7 @@ export class SubscriptionService {
     }
 
     const customer = await stripeService.createCustomer({
-      email: user.email,
+      email: normalizeEmailForStorage(user.email),
       ...(user.name ? { name: user.name } : {}),
       userId: user.id,
     });

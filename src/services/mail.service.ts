@@ -1,6 +1,7 @@
 import { env } from '../config/env.js';
 import { ApiError } from '../utils/ApiError.js';
 import { logger } from '../utils/logger.js';
+import { normalizeEmailForStorage } from '../utils/email.js';
 import { buildLoginOtpEmail } from './mail-templates.js';
 
 interface SendEmailParams {
@@ -16,6 +17,8 @@ export class MailService {
       throw ApiError.serviceUnavailable('Email delivery is not configured');
     }
 
+    const to = normalizeEmailForStorage(params.to);
+
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -24,7 +27,7 @@ export class MailService {
       },
       body: JSON.stringify({
         from: env.MAIL.MAIL_FROM,
-        to: [params.to],
+        to: [to],
         subject: params.subject,
         text: params.text,
         html: params.html,
@@ -40,7 +43,7 @@ export class MailService {
       throw ApiError.serviceUnavailable('Could not send verification email');
     }
 
-    logger.info('Email sent', { to: params.to, subject: params.subject });
+    logger.info('Email sent', { to, subject: params.subject });
   }
 
   async sendLoginOtp(email: string, code: string): Promise<void> {

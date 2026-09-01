@@ -1,7 +1,16 @@
 import { body } from 'express-validator';
+import { normalizeEmailForStorage } from '../utils/email.js';
+
+function emailBodyRule() {
+  return body('email')
+    .trim()
+    .customSanitizer((value) => normalizeEmailForStorage(String(value ?? '')))
+    .isEmail()
+    .withMessage('Valid email is required');
+}
 
 export const registerRules = [
-  body('email').isEmail().withMessage('Valid email is required').normalizeEmail(),
+  emailBodyRule(),
   body('password')
     .isString()
     .isLength({ min: 8, max: 128 })
@@ -15,19 +24,17 @@ export const registerRules = [
 ];
 
 export const loginRules = [
-  body('email').isEmail().withMessage('Valid email is required').normalizeEmail(),
+  emailBodyRule(),
   body('password')
     .optional({ values: 'falsy' })
     .isString()
     .withMessage('Password must be a string'),
 ];
 
-export const otpRequestRules = [
-  body('email').isEmail().withMessage('Valid email is required').normalizeEmail(),
-];
+export const otpRequestRules = [emailBodyRule()];
 
 export const otpVerifyRules = [
-  body('email').isEmail().withMessage('Valid email is required').normalizeEmail(),
+  emailBodyRule(),
   body('code')
     .isString()
     .trim()

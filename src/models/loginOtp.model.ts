@@ -1,4 +1,5 @@
 import mongoose, { type HydratedDocument, type Model } from 'mongoose';
+import { normalizeEmailForStorage } from '../utils/email.js';
 
 export interface ILoginOtp {
   email: string;
@@ -40,6 +41,12 @@ const LoginOtpSchema = new mongoose.Schema<ILoginOtp>(
   },
   { timestamps: true },
 );
+
+LoginOtpSchema.pre('save', function () {
+  if (this.isModified('email') && this.email) {
+    this.email = normalizeEmailForStorage(this.email);
+  }
+});
 
 const LoginOtpModel: Model<ILoginOtp> =
   mongoose.models.LoginOtp ?? mongoose.model<ILoginOtp>('LoginOtp', LoginOtpSchema);

@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import { ApiError } from '../utils/ApiError.js';
 import { MESSAGES } from '../constants/index.js';
 import { logger } from '../utils/logger.js';
+import { normalizeEmailForStorage } from '../utils/email.js';
 
 function toStripeError(error: unknown): ApiError {
   if (error instanceof ApiError) return error;
@@ -81,7 +82,7 @@ export class StripeService {
   }): Promise<Stripe.Customer> {
     try {
       return await stripe.customers.create({
-        email: params.email,
+        email: normalizeEmailForStorage(params.email),
         ...(params.name ? { name: params.name } : {}),
         metadata: { userId: params.userId },
       });

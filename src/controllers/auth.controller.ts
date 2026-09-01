@@ -4,6 +4,7 @@ import { ApiResponse } from '../utils/ApiResponse.js';
 import { MESSAGES } from '../constants/index.js';
 import { authService } from '../services/auth.service.js';
 import { ApiError } from '../utils/ApiError.js';
+import { logger } from '@/utils/logger.js';
 
 export class AuthController {
   public register = asyncHandler(
@@ -21,6 +22,7 @@ export class AuthController {
 
   public login = asyncHandler(
     async (req: Request, res: Response): Promise<void> => {
+      logger.info("login request", {req: req.body})
       const data = await authService.login({
         email: String(req.body.email),
         ...(typeof req.body.password === 'string' ? { password: req.body.password } : {}),

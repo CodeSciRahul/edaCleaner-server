@@ -6,6 +6,7 @@ import { subscriptionService } from './subscription.service.js';
 import { authService } from './auth.service.js';
 import { logger } from '../utils/logger.js';
 import { ApiError } from '../utils/ApiError.js';
+import { normalizeEmailForStorage } from '../utils/email.js';
 
 export class WebhookService {
   async handleRawEvent(payload: Buffer, signature: string | undefined) {
@@ -130,6 +131,7 @@ export class WebhookService {
     const { user, created } = await authService.ensureUserFromStripeCustomer(
       customer,
     );
+    logger.info("user", {user})
     logger.info('Stripe customer synced to account', {
       customerId: customer.id,
       userId: user?.id ?? null,
@@ -161,8 +163,11 @@ export class WebhookService {
         ? session.customer
         : session.customer?.id ?? null;
 
-    const checkoutEmail =
+    const checkoutEmailRaw =
       session.customer_details?.email ?? session.customer_email ?? null;
+    const checkoutEmail = checkoutEmailRaw
+      ? normalizeEmailForStorage(checkoutEmailRaw)
+      : null;
 
     if (!userId && checkoutEmail && customerId) {
       const { user } = await authService.ensureUserFromCheckoutEmail(

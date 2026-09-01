@@ -1,4 +1,5 @@
 import mongoose, { type HydratedDocument, type Model } from 'mongoose';
+import { normalizeEmailForStorage } from '../utils/email.js';
 
 export interface IUser {
   email: string;
@@ -57,6 +58,12 @@ const UserSchema = new mongoose.Schema<IUser>(
   },
   { timestamps: true },
 );
+
+UserSchema.pre('save', function () {
+  if (this.isModified('email') && this.email) {
+    this.email = normalizeEmailForStorage(this.email);
+  }
+});
 
 const UserModel: Model<IUser> =
   mongoose.models.User ?? mongoose.model<IUser>('User', UserSchema);

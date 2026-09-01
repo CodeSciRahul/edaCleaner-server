@@ -14,6 +14,7 @@ import {
   stripeService,
 } from './stripe.service.js';
 import { logger } from '../utils/logger.js';
+import { normalizeEmailForStorage } from '../utils/email.js';
 import type Stripe from 'stripe';
 
 const ACTIVE_PAID_STATUSES: SubscriptionStatus[] = [
@@ -131,7 +132,7 @@ export class SubscriptionService {
     }
 
     const customer = await stripeService.createCustomer({
-      email: user.email,
+      email: normalizeEmailForStorage(user.email),
       ...(user.name ? { name: user.name } : {}),
       userId: user.id,
     });
@@ -205,6 +206,35 @@ export class SubscriptionService {
       sessionId: session.id,
       url: session.url,
       publishableKey: env.STRIPE.STRIPE_PUBLISHABLE_KEY,
+    };
+  }
+
+  async createGuestCheckout(planId: string) {
+    const plan = await planService.getById(planId);
+    if (!isPlanSlug(plan.slug) || !isPaidPlan(plan.slug)) {
+      throw ApiError.badRequest('Checkout is only available for Pro and Premium');
+    }
+    if (!plan.stripePriceId) {
+      throw ApiError.badRequest('Plan is missing a Stripe price configuration');
+    }
+
+    const idempotencyKey = `guest-checkout:${plan.slug}:${plan.stripePriceId}:${randomUUID()}`;
+    const session = await stripeService.createGuestCheckoutSession({
+      priceId: plan.stripePriceId,
+      planSlug: plan.slug,
+      idempotencyKey,
+    });
+
+    logger.info('Guest checkout session created', {
+      plan: plan.slug,
+      sessionId: session.id,
+    });
+
+    return {
+      sessionId: session.id,
+      url: session.url,
+      publishableKey: env.STRIPE.STRIPE_PUBLISHABLE_KEY,
+      guest: true as const,
     };
   }
 

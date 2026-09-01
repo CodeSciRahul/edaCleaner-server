@@ -51,6 +51,14 @@ export class ApiError extends Error {
     return new ApiError(message, HTTP_STATUS.UNPROCESSABLE_ENTITY, errors);
   }
 
+  static tooManyRequests(message = 'Too many requests'): ApiError {
+    return new ApiError(message, HTTP_STATUS.TOO_MANY_REQUESTS);
+  }
+
+  static serviceUnavailable(message = 'Service unavailable'): ApiError {
+    return new ApiError(message, HTTP_STATUS.SERVICE_UNAVAILABLE);
+  }
+
   static internal(message = 'Internal server error'): ApiError {
     return new ApiError(message, HTTP_STATUS.INTERNAL_SERVER_ERROR, [], false);
   }

@@ -24,6 +24,11 @@ function getEnv(key: string, fallback?: string): string {
   return value.trim();
 }
 
+function getOptionalEnv(key: string, fallback = ''): string {
+  const value = process.env[key] ?? fallback;
+  return value.trim();
+}
+
 function parsePort(value: string): number {
   const port = Number(value);
 
@@ -100,6 +105,13 @@ export const env: EnvConfig = Object.freeze({
     STRIPE_CANCEL_URL: getEnv(
       'STRIPE_CANCEL_URL',
       'http://localhost:3000/pricing?checkout=cancel',
+    ),
+  },
+  MAIL: {
+    RESEND_API_KEY: getOptionalEnv('RESEND_API_KEY'),
+    MAIL_FROM: getOptionalEnv(
+      'MAIL_FROM',
+      'EDA Cleaner <onboarding@edacleaner.com>',
     ),
   },
 });

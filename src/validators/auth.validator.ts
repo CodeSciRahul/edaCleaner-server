@@ -1,7 +1,16 @@
 import { body } from 'express-validator';
+import { normalizeEmailForStorage } from '../utils/email.js';
+
+function emailBodyRule() {
+  return body('email')
+    .trim()
+    .customSanitizer((value) => normalizeEmailForStorage(String(value ?? '')))
+    .isEmail()
+    .withMessage('Valid email is required');
+}
 
 export const registerRules = [
-  body('email').isEmail().withMessage('Valid email is required').normalizeEmail(),
+  emailBodyRule(),
   body('password')
     .isString()
     .isLength({ min: 8, max: 128 })
@@ -15,8 +24,29 @@ export const registerRules = [
 ];
 
 export const loginRules = [
-  body('email').isEmail().withMessage('Valid email is required').normalizeEmail(),
-  body('password').isString().notEmpty().withMessage('Password is required'),
+  emailBodyRule(),
+  body('password')
+    .optional({ values: 'falsy' })
+    .isString()
+    .withMessage('Password must be a string'),
+];
+
+export const otpRequestRules = [emailBodyRule()];
+
+export const otpVerifyRules = [
+  emailBodyRule(),
+  body('code')
+    .isString()
+    .trim()
+    .matches(/^\d{6}$/)
+    .withMessage('Enter the 6-digit code from your email'),
+];
+
+export const setPasswordRules = [
+  body('password')
+    .isString()
+    .isLength({ min: 8, max: 128 })
+    .withMessage('Password must be 8–128 characters'),
 ];
 
 export const refreshRules = [

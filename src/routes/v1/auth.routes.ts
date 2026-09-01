@@ -5,8 +5,11 @@ import { validateRequest } from '../../middlewares/validate.middleware.js';
 import {
   loginRules,
   logoutRules,
+  otpRequestRules,
+  otpVerifyRules,
   refreshRules,
   registerRules,
+  setPasswordRules,
 } from '../../validators/auth.validator.js';
 
 const authRouter = Router();
@@ -21,6 +24,20 @@ authRouter.post(
 authRouter.post('/login', loginRules, validateRequest, authController.login);
 
 authRouter.post(
+  '/otp/request',
+  otpRequestRules,
+  validateRequest,
+  authController.requestOtp,
+);
+
+authRouter.post(
+  '/otp/verify',
+  otpVerifyRules,
+  validateRequest,
+  authController.verifyOtp,
+);
+
+authRouter.post(
   '/refresh',
   refreshRules,
   validateRequest,
@@ -30,5 +47,13 @@ authRouter.post(
 authRouter.post('/logout', logoutRules, validateRequest, authController.logout);
 
 authRouter.get('/me', authenticate, authController.me);
+
+authRouter.post(
+  '/set-password',
+  authenticate,
+  setPasswordRules,
+  validateRequest,
+  authController.setPassword,
+);
 
 export default authRouter;

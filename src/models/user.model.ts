@@ -1,12 +1,15 @@
 import mongoose, { type HydratedDocument, type Model } from 'mongoose';
+import { normalizeEmailForStorage } from '../utils/email.js';
 
 export interface IUser {
   email: string;
-  passwordHash: string;
+  passwordHash: string | null;
   name: string;
   stripeCustomerId: string | null;
   trialUsed: boolean;
   isActive: boolean;
+  /** True when the user was created from Stripe checkout and has not chosen a password yet. */
+  mustSetPassword: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -25,7 +28,8 @@ const UserSchema = new mongoose.Schema<IUser>(
     },
     passwordHash: {
       type: String,
-      required: true,
+      required: false,
+      default: null,
       select: false,
     },
     name: {
@@ -47,9 +51,19 @@ const UserSchema = new mongoose.Schema<IUser>(
       type: Boolean,
       default: true,
     },
+    mustSetPassword: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true },
 );
+
+UserSchema.pre('save', function () {
+  if (this.isModified('email') && this.email) {
+    this.email = normalizeEmailForStorage(this.email);
+  }
+});
 
 const UserModel: Model<IUser> =
   mongoose.models.User ?? mongoose.model<IUser>('User', UserSchema);

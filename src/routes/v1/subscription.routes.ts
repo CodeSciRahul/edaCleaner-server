@@ -11,6 +11,13 @@ import {
 
 const subscriptionRouter = Router();
 
+subscriptionRouter.post(
+  '/guest-checkout',
+  checkoutRules,
+  validateRequest,
+  subscriptionController.guestCheckout,
+);
+
 subscriptionRouter.use(authenticate);
 
 subscriptionRouter.get('/', subscriptionController.getSubscription);

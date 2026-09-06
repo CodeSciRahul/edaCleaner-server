@@ -1,9 +1,12 @@
 import mongoose, { type HydratedDocument, type Model } from 'mongoose';
 import { normalizeEmailForStorage } from '../utils/email.js';
 
+export type OtpPurpose = 'login' | 'register' | 'reset';
+
 export interface ILoginOtp {
   email: string;
   codeHash: string;
+  purpose: OtpPurpose;
   expiresAt: Date;
   attempts: number;
   sentAt: Date;
@@ -24,6 +27,12 @@ const LoginOtpSchema = new mongoose.Schema<ILoginOtp>(
     codeHash: {
       type: String,
       required: true,
+    },
+    purpose: {
+      type: String,
+      enum: ['login', 'register', 'reset'],
+      required: true,
+      default: 'login',
     },
     expiresAt: {
       type: Date,

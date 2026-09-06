@@ -3,12 +3,14 @@ import { authController } from '../../controllers/auth.controller.js';
 import { authenticate } from '../../middlewares/auth.middleware.js';
 import { validateRequest } from '../../middlewares/validate.middleware.js';
 import {
+  forgotPasswordRules,
   loginRules,
   logoutRules,
   otpRequestRules,
   otpVerifyRules,
   refreshRules,
   registerRules,
+  resetPasswordRules,
   setPasswordRules,
 } from '../../validators/auth.validator.js';
 
@@ -35,6 +37,20 @@ authRouter.post(
   otpVerifyRules,
   validateRequest,
   authController.verifyOtp,
+);
+
+authRouter.post(
+  '/password/forgot',
+  forgotPasswordRules,
+  validateRequest,
+  authController.forgotPassword,
+);
+
+authRouter.post(
+  '/password/reset',
+  resetPasswordRules,
+  validateRequest,
+  authController.resetPassword,
 );
 
 authRouter.post(

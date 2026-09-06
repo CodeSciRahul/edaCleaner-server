@@ -27,29 +27,77 @@ function formatCode(code: string): string {
   return code.replace(/\D/g, '').split('').join(' ');
 }
 
-export function buildLoginOtpEmail(code: string): { subject: string; text: string; html: string } {
+type OtpEmailKind = 'login' | 'register' | 'reset';
+
+const OTP_COPY: Record<
+  OtpEmailKind,
+  { subjectAction: string; heading: string; intro: string; steps: string[] }
+> = {
+  login: {
+    subjectAction: 'verification code',
+    heading: 'Sign in to the desktop app',
+    intro: 'Use this one-time code in {product} to finish signing in on your computer.',
+    steps: [
+      'Open the login window',
+      'Enter the email for this account',
+      'Enter the verification code when asked',
+      'After sign-in, you can set a password in Settings → Account',
+    ],
+  },
+  register: {
+    subjectAction: 'email verification code',
+    heading: 'Verify your email',
+    intro: 'Use this one-time code in {product} to verify your email and finish creating your account.',
+    steps: [
+      'Return to the create-account window',
+      'Enter the 6-digit verification code',
+      'Continue to the app once verified',
+    ],
+  },
+  reset: {
+    subjectAction: 'password reset code',
+    heading: 'Reset your password',
+    intro: 'Use this one-time code in {product} to reset the password for your account.',
+    steps: [
+      'Return to the forgot-password window',
+      'Enter the 6-digit verification code',
+      'Choose a new password',
+    ],
+  },
+};
+
+function buildOtpEmail(
+  kind: OtpEmailKind,
+  code: string,
+): { subject: string; text: string; html: string } {
+  const copy = OTP_COPY[kind];
   const safeCode = escapeHtml(code.trim());
   const displayCode = escapeHtml(formatCode(code.trim()));
   const year = new Date().getFullYear();
+  const intro = copy.intro.replace('{product}', BRAND.product);
 
-  const subject = `Your ${BRAND.product} verification code`;
+  const subject = `Your ${BRAND.product} ${copy.subjectAction}`;
 
   const text = [
-    `Sign in to the desktop app`,
+    copy.heading,
     '',
     `Use this one-time code in ${BRAND.product}: ${code.trim()}`,
     'Expires in 10 minutes · one use only',
     '',
     'In the app:',
-    '1. Open the login window',
-    '2. Enter the email for this account',
-    '3. Enter the verification code when asked',
-    '4. After sign-in, you can set a password in Settings → Account',
+    ...copy.steps.map((step, index) => `${index + 1}. ${step}`),
     '',
     'Do not share this code. If you did not request it, you can ignore this email.',
     '',
     `© ${year} ${BRAND.product}. Desktop optimization for your computer.`,
   ].join('\n');
+
+  const stepsHtml = copy.steps
+    .map(
+      (step, index) =>
+        `<li style="margin-bottom:${index === copy.steps.length - 1 ? '0' : '4px'};">${escapeHtml(step)}</li>`,
+    )
+    .join('');
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -83,9 +131,12 @@ export function buildLoginOtpEmail(code: string): { subject: string; text: strin
 
           <tr>
             <td style="padding:32px 32px 8px;">
-              <h1 style="margin:0 0 12px;font-size:24px;line-height:1.25;font-weight:700;color:${BRAND.primary};letter-spacing:-0.02em;">Sign in to the desktop app</h1>
+              <h1 style="margin:0 0 12px;font-size:24px;line-height:1.25;font-weight:700;color:${BRAND.primary};letter-spacing:-0.02em;">${escapeHtml(copy.heading)}</h1>
               <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#334155;">
-                Use this one-time code in <strong style="color:${BRAND.primary};">${BRAND.product}</strong> to finish signing in on your computer.
+                ${escapeHtml(intro).replace(
+                  escapeHtml(BRAND.product),
+                  `<strong style="color:${BRAND.primary};">${escapeHtml(BRAND.product)}</strong>`,
+                )}
               </p>
 
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 28px;background:${BRAND.codeBg};border:1px solid ${BRAND.border};border-radius:12px;">
@@ -100,10 +151,7 @@ export function buildLoginOtpEmail(code: string): { subject: string; text: strin
 
               <p style="margin:0 0 8px;font-size:14px;font-weight:700;color:#1e293b;">In the app</p>
               <ol style="margin:0 0 28px;padding-left:20px;color:${BRAND.muted};font-size:14px;line-height:1.7;">
-                <li style="margin-bottom:4px;">Open the login window</li>
-                <li style="margin-bottom:4px;">Enter the email for this account</li>
-                <li style="margin-bottom:4px;">Enter the verification code when asked</li>
-                <li>After sign-in, you can set a password in <strong style="color:#334155;">Settings → Account</strong></li>
+                ${stepsHtml}
               </ol>
 
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px;">
@@ -146,4 +194,16 @@ export function buildLoginOtpEmail(code: string): { subject: string; text: strin
 </html>`;
 
   return { subject, text, html };
+}
+
+export function buildLoginOtpEmail(code: string): { subject: string; text: string; html: string } {
+  return buildOtpEmail('login', code);
+}
+
+export function buildRegisterOtpEmail(code: string): { subject: string; text: string; html: string } {
+  return buildOtpEmail('register', code);
+}
+
+export function buildResetOtpEmail(code: string): { subject: string; text: string; html: string } {
+  return buildOtpEmail('reset', code);
 }

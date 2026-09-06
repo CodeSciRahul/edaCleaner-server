@@ -10,6 +10,8 @@ export interface IUser {
   isActive: boolean;
   /** True when the user was created from Stripe checkout and has not chosen a password yet. */
   mustSetPassword: boolean;
+  /** False until the user verifies ownership of the email (register OTP or login OTP). */
+  emailVerified: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -54,6 +56,10 @@ const UserSchema = new mongoose.Schema<IUser>(
     mustSetPassword: {
       type: Boolean,
       default: false,
+    },
+    emailVerified: {
+      type: Boolean,
+      default: true,
     },
   },
   { timestamps: true },

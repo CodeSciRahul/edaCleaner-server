@@ -2,7 +2,11 @@ import { env } from '../config/env.js';
 import { ApiError } from '../utils/ApiError.js';
 import { logger } from '../utils/logger.js';
 import { normalizeEmailForStorage } from '../utils/email.js';
-import { buildLoginOtpEmail } from './mail-templates.js';
+import {
+  buildLoginOtpEmail,
+  buildRegisterOtpEmail,
+  buildResetOtpEmail,
+} from './mail-templates.js';
 
 interface SendEmailParams {
   to: string;
@@ -48,6 +52,26 @@ export class MailService {
 
   async sendLoginOtp(email: string, code: string): Promise<void> {
     const template = buildLoginOtpEmail(code);
+    await this.send({
+      to: email,
+      subject: template.subject,
+      text: template.text,
+      html: template.html,
+    });
+  }
+
+  async sendRegisterOtp(email: string, code: string): Promise<void> {
+    const template = buildRegisterOtpEmail(code);
+    await this.send({
+      to: email,
+      subject: template.subject,
+      text: template.text,
+      html: template.html,
+    });
+  }
+
+  async sendResetOtp(email: string, code: string): Promise<void> {
+    const template = buildResetOtpEmail(code);
     await this.send({
       to: email,
       subject: template.subject,

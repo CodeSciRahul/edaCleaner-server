@@ -60,6 +60,8 @@ export class AuthService {
         if (input.name?.trim()) existing.name = input.name.trim();
         await existing.save();
         logger.info('Guest checkout account claimed', { userId: existing.id });
+        // Welcome may already have been sent at Stripe user creation; sendSafe is fine to retry.
+        await mailService.sendWelcomeEmail(email, { name: existing.name });
         return this.buildAuthResponse(
           {
             id: existing.id,
@@ -105,6 +107,8 @@ export class AuthService {
     await subscriptionService.assignFreePlan(user.id);
     logger.info('User registered pending email verification', { userId: user.id });
 
+    // Welcome is sent after OTP verification so it does not compete with the
+    // verification email (same-second bursts often drop the first message).
     await this.issueOtp(email, 'register');
     return { requiresOtp: true as const, purpose: 'register' as const };
   }
@@ -165,6 +169,7 @@ export class AuthService {
         userId: user.id,
         email: normalized,
       });
+      await mailService.sendWelcomeEmail(normalized, { name: user.name });
       return { user, created: true };
     } catch {
       user = await findUserByEmail(normalized);
@@ -249,12 +254,17 @@ export class AuthService {
     const email = normalizeEmailForStorage(user.email);
     await this.consumeOtp(email, input.code, ['login', 'register']);
 
-    if (user.emailVerified === false) {
+    const newlyVerified = user.emailVerified === false;
+    if (newlyVerified) {
       user.emailVerified = true;
       await user.save();
+      // Manual signup only — Stripe passwordless users already got welcome at create.
+      if (user.passwordHash) {
+        await mailService.sendWelcomeEmail(email, { name: user.name });
+      }
     }
 
-    logger.info('Login OTP verified', { userId: user.id });
+    logger.info('Login OTP verified', { userId: user.id, newlyVerified });
     return this.buildAuthResponse(this.toAuthUser(user), input.userAgent);
   }
 

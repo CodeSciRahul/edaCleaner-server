@@ -62,3 +62,18 @@ export const logoutRules = [
     .isString()
     .withMessage('refreshToken must be a string'),
 ];
+
+export const forgotPasswordRules = [emailBodyRule()];
+
+export const resetPasswordRules = [
+  emailBodyRule(),
+  body('code')
+    .isString()
+    .trim()
+    .matches(/^\d{6}$/)
+    .withMessage('Enter the 6-digit code from your email'),
+  body('password')
+    .isString()
+    .isLength({ min: 8, max: 128 })
+    .withMessage('Password must be 8–128 characters'),
+];

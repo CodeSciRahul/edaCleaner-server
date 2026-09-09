@@ -16,6 +16,15 @@ export class AuthController {
         ...(req.get('user-agent') ? { userAgent: req.get('user-agent') } : {}),
       });
 
+      if ('requiresOtp' in data && data.requiresOtp) {
+        ApiResponse.success({
+          res,
+          data,
+          message: MESSAGES.OTP_SENT,
+        });
+        return;
+      }
+
       ApiResponse.created(res, data, MESSAGES.REGISTERED);
     },
   );
@@ -139,6 +148,34 @@ export class AuthController {
 
       const data = await authService.me(req.user.id);
       ApiResponse.success({ res, data, message: MESSAGES.SUCCESS });
+    },
+  );
+
+  public forgotPassword = asyncHandler(
+    async (req: Request, res: Response): Promise<void> => {
+      const data = await authService.forgotPassword(String(req.body.email));
+      ApiResponse.success({
+        res,
+        data,
+        message: MESSAGES.OTP_SENT,
+      });
+    },
+  );
+
+  public resetPassword = asyncHandler(
+    async (req: Request, res: Response): Promise<void> => {
+      const data = await authService.resetPassword({
+        email: String(req.body.email),
+        code: String(req.body.code),
+        password: String(req.body.password),
+        userAgent: req.get('user-agent') ?? null,
+      });
+
+      ApiResponse.success({
+        res,
+        data,
+        message: MESSAGES.PASSWORD_RESET,
+      });
     },
   );
 }

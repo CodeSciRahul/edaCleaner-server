@@ -54,4 +54,5 @@ export const MESSAGES = {
   OTP_SENT: 'A verification code was sent to your email',
   OTP_VERIFIED: 'Logged in successfully',
   PASSWORD_SET: 'Password saved',
+  PASSWORD_RESET: 'Password updated successfully',
 } as const;

@@ -2,7 +2,7 @@ import { createHmac, randomInt, timingSafeEqual } from 'crypto';
 import bcrypt from 'bcryptjs';
 import type Stripe from 'stripe';
 import UserModel, { type UserDocument } from '../models/user.model.js';
-import LoginOtpModel from '../models/loginOtp.model.js';
+import LoginOtpModel, { type OtpPurpose } from '../models/loginOtp.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { MESSAGES } from '../constants/index.js';
 import { env } from '../config/env.js';
@@ -39,7 +39,14 @@ export interface LoginInput {
   userAgent?: string | null | undefined;
 }
 
-type AuthUser = { id: string; email: string; name: string; trialUsed: boolean; mustSetPassword: boolean };
+type AuthUser = {
+  id: string;
+  email: string;
+  name: string;
+  trialUsed: boolean;
+  mustSetPassword: boolean;
+  emailVerified: boolean;
+};
 
 export class AuthService {
   async register(input: RegisterInput) {
@@ -49,9 +56,12 @@ export class AuthService {
       if (existing.mustSetPassword && existing.isActive) {
         existing.passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
         existing.mustSetPassword = false;
+        existing.emailVerified = true;
         if (input.name?.trim()) existing.name = input.name.trim();
         await existing.save();
         logger.info('Guest checkout account claimed', { userId: existing.id });
+        // Welcome may already have been sent at Stripe user creation; sendSafe is fine to retry.
+        await mailService.sendWelcomeEmail(email, { name: existing.name });
         return this.buildAuthResponse(
           {
             id: existing.id,
@@ -59,10 +69,27 @@ export class AuthService {
             name: existing.name,
             trialUsed: existing.trialUsed,
             mustSetPassword: false,
+            emailVerified: true,
           },
           input.userAgent,
         );
       }
+
+      if (existing.emailVerified === false && existing.isActive) {
+        if (existing.passwordHash) {
+          const valid = await bcrypt.compare(input.password, existing.passwordHash);
+          if (!valid) {
+            throw ApiError.conflict('An account with this email already exists');
+          }
+        } else {
+          existing.passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
+          if (input.name?.trim()) existing.name = input.name.trim();
+          await existing.save();
+        }
+        await this.issueOtp(email, 'register');
+        return { requiresOtp: true as const, purpose: 'register' as const };
+      }
+
       throw ApiError.conflict('An account with this email already exists');
     }
 
@@ -74,12 +101,16 @@ export class AuthService {
       trialUsed: false,
       isActive: true,
       mustSetPassword: false,
+      emailVerified: false,
     });
 
     await subscriptionService.assignFreePlan(user.id);
-    logger.info('User registered with Free plan', { userId: user.id });
+    logger.info('User registered pending email verification', { userId: user.id });
 
-    return this.buildAuthResponse(this.toAuthUser(user), input.userAgent);
+    // Welcome is sent after OTP verification so it does not compete with the
+    // verification email (same-second bursts often drop the first message).
+    await this.issueOtp(email, 'register');
+    return { requiresOtp: true as const, purpose: 'register' as const };
   }
 
   async ensureUserFromStripeCustomer(customer: Stripe.Customer) {
@@ -131,12 +162,14 @@ export class AuthService {
         trialUsed: false,
         isActive: true,
         mustSetPassword: true,
+        emailVerified: false,
       });
       await subscriptionService.assignFreePlan(user.id);
       logger.info('Passwordless user created from Stripe', {
         userId: user.id,
         email: normalized,
       });
+      await mailService.sendWelcomeEmail(normalized, { name: user.name });
       return { user, created: true };
     } catch {
       user = await findUserByEmail(normalized);
@@ -159,9 +192,14 @@ export class AuthService {
       throw ApiError.unauthorized('Invalid email or password');
     }
 
+    if (user.emailVerified === false) {
+      await this.issueOtp(email, 'register');
+      return { requiresOtp: true as const, purpose: 'register' as const };
+    }
+
     if (user.mustSetPassword || !user.passwordHash) {
-      await this.sendLoginOtp(email);
-      return { requiresOtp: true as const };
+      await this.issueOtp(email, 'login');
+      return { requiresOtp: true as const, purpose: 'login' as const };
     }
 
     const password = input.password ?? '';
@@ -177,39 +215,29 @@ export class AuthService {
     return this.buildAuthResponse(this.toAuthUser(user), input.userAgent);
   }
 
+  /** Resend OTP for login / unverified register flows. */
   async sendLoginOtp(email: string) {
     const user = await findUserByEmail(email, { select: '+passwordHash' });
     const storedEmail = user
       ? normalizeEmailForStorage(user.email)
       : normalizeEmailForStorage(email);
-    if (!user || !user.isActive || (!user.mustSetPassword && user.passwordHash)) {
+
+    if (!user || !user.isActive) {
       logger.info('OTP request ignored', { email: storedEmail });
       return { requiresOtp: true as const };
     }
 
-    const existing = await LoginOtpModel.findOne({ email: storedEmail });
-    if (existing && Date.now() - existing.sentAt.getTime() < OTP_RESEND_MS) {
-      throw ApiError.tooManyRequests('Wait a moment before requesting another code');
+    if (user.emailVerified === false) {
+      await this.issueOtp(storedEmail, 'register');
+      return { requiresOtp: true as const };
     }
 
-    const code = String(randomInt(100000, 1000000));
-    const codeHash = this.hashOtp(storedEmail, code);
-    const now = new Date();
+    if (user.mustSetPassword || !user.passwordHash) {
+      await this.issueOtp(storedEmail, 'login');
+      return { requiresOtp: true as const };
+    }
 
-    await LoginOtpModel.findOneAndUpdate(
-      { email: storedEmail },
-      {
-        email: storedEmail,
-        codeHash,
-        expiresAt: new Date(now.getTime() + OTP_TTL_MS),
-        attempts: 0,
-        sentAt: now,
-      },
-      { upsert: true, new: true },
-    );
-
-    await mailService.sendLoginOtp(storedEmail, code);
-    logger.info('Login OTP sent', { userId: user.id });
+    logger.info('OTP request ignored', { email: storedEmail });
     return { requiresOtp: true as const };
   }
 
@@ -218,42 +246,62 @@ export class AuthService {
     code: string;
     userAgent?: string | null | undefined;
   }) {
-    const user = await findUserByEmail(input.email);
+    const user = await findUserByEmail(input.email, { select: '+passwordHash' });
     if (!user || !user.isActive) {
       throw ApiError.unauthorized('Invalid or expired verification code');
     }
 
     const email = normalizeEmailForStorage(user.email);
-    const code = input.code.trim();
-    const record = await LoginOtpModel.findOne({ email });
-    if (!record) {
+    await this.consumeOtp(email, input.code, ['login', 'register']);
+
+    const newlyVerified = user.emailVerified === false;
+    if (newlyVerified) {
+      user.emailVerified = true;
+      await user.save();
+      // Manual signup only — Stripe passwordless users already got welcome at create.
+      if (user.passwordHash) {
+        await mailService.sendWelcomeEmail(email, { name: user.name });
+      }
+    }
+
+    logger.info('Login OTP verified', { userId: user.id, newlyVerified });
+    return this.buildAuthResponse(this.toAuthUser(user), input.userAgent);
+  }
+
+  async forgotPassword(emailInput: string) {
+    const email = normalizeEmailForStorage(emailInput);
+    const user = await findUserByEmail(email, { select: '+passwordHash' });
+
+    // Always succeed to avoid account enumeration.
+    if (!user || !user.isActive || (!user.passwordHash && !user.mustSetPassword)) {
+      logger.info('Password reset OTP ignored', { email });
+      return { requiresOtp: true as const };
+    }
+
+    await this.issueOtp(normalizeEmailForStorage(user.email), 'reset');
+    return { requiresOtp: true as const };
+  }
+
+  async resetPassword(input: {
+    email: string;
+    code: string;
+    password: string;
+    userAgent?: string | null | undefined;
+  }) {
+    const user = await findUserByEmail(input.email, { select: '+passwordHash' });
+    if (!user || !user.isActive) {
       throw ApiError.unauthorized('Invalid or expired verification code');
     }
 
-    if (record.expiresAt.getTime() <= Date.now()) {
-      await record.deleteOne();
-      throw ApiError.unauthorized('Verification code expired. Request a new one');
-    }
+    const email = normalizeEmailForStorage(user.email);
+    await this.consumeOtp(email, input.code, ['reset']);
 
-    if (record.attempts >= OTP_MAX_ATTEMPTS) {
-      await record.deleteOne();
-      throw ApiError.tooManyRequests('Too many attempts. Request a new code');
-    }
+    user.passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
+    user.mustSetPassword = false;
+    user.emailVerified = true;
+    await user.save();
 
-    const expected = Buffer.from(record.codeHash);
-    const actual = Buffer.from(this.hashOtp(email, code));
-    const matches =
-      expected.length === actual.length && timingSafeEqual(expected, actual);
-
-    if (!matches) {
-      record.attempts += 1;
-      await record.save();
-      throw ApiError.unauthorized('Invalid verification code');
-    }
-
-    await record.deleteOne();
-
-    logger.info('Login OTP verified', { userId: user.id });
+    logger.info('Password reset via OTP', { userId: user.id });
     return this.buildAuthResponse(this.toAuthUser(user), input.userAgent);
   }
 
@@ -265,6 +313,7 @@ export class AuthService {
 
     user.passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     user.mustSetPassword = false;
+    user.emailVerified = true;
     await user.save();
     logger.info('Password set after OTP login', { userId: user.id });
 
@@ -330,6 +379,82 @@ export class AuthService {
     return [...permissions];
   }
 
+  private async issueOtp(email: string, purpose: OtpPurpose) {
+    const storedEmail = normalizeEmailForStorage(email);
+    const existing = await LoginOtpModel.findOne({ email: storedEmail });
+    if (existing && Date.now() - existing.sentAt.getTime() < OTP_RESEND_MS) {
+      throw ApiError.tooManyRequests('Wait a moment before requesting another code');
+    }
+
+    const code = String(randomInt(100000, 1000000));
+    const codeHash = this.hashOtp(storedEmail, code);
+    const now = new Date();
+
+    await LoginOtpModel.findOneAndUpdate(
+      { email: storedEmail },
+      {
+        email: storedEmail,
+        codeHash,
+        purpose,
+        expiresAt: new Date(now.getTime() + OTP_TTL_MS),
+        attempts: 0,
+        sentAt: now,
+      },
+      { upsert: true, new: true },
+    );
+
+    if (purpose === 'register') {
+      await mailService.sendRegisterOtp(storedEmail, code);
+    } else if (purpose === 'reset') {
+      await mailService.sendResetOtp(storedEmail, code);
+    } else {
+      await mailService.sendLoginOtp(storedEmail, code);
+    }
+
+    logger.info('OTP sent', { email: storedEmail, purpose });
+  }
+
+  private async consumeOtp(
+    email: string,
+    rawCode: string,
+    allowedPurposes: OtpPurpose[],
+  ): Promise<OtpPurpose> {
+    const code = rawCode.trim();
+    const record = await LoginOtpModel.findOne({ email });
+    if (!record) {
+      throw ApiError.unauthorized('Invalid or expired verification code');
+    }
+
+    if (!allowedPurposes.includes(record.purpose)) {
+      throw ApiError.unauthorized('Invalid or expired verification code');
+    }
+
+    if (record.expiresAt.getTime() <= Date.now()) {
+      await record.deleteOne();
+      throw ApiError.unauthorized('Verification code expired. Request a new one');
+    }
+
+    if (record.attempts >= OTP_MAX_ATTEMPTS) {
+      await record.deleteOne();
+      throw ApiError.tooManyRequests('Too many attempts. Request a new code');
+    }
+
+    const expected = Buffer.from(record.codeHash);
+    const actual = Buffer.from(this.hashOtp(email, code));
+    const matches =
+      expected.length === actual.length && timingSafeEqual(expected, actual);
+
+    if (!matches) {
+      record.attempts += 1;
+      await record.save();
+      throw ApiError.unauthorized('Invalid verification code');
+    }
+
+    const purpose = record.purpose;
+    await record.deleteOne();
+    return purpose;
+  }
+
   private toAuthUser(user: UserDocument): AuthUser {
     return {
       id: user.id,
@@ -337,6 +462,7 @@ export class AuthService {
       name: user.name,
       trialUsed: user.trialUsed,
       mustSetPassword: Boolean(user.mustSetPassword),
+      emailVerified: user.emailVerified !== false,
     };
   }
 

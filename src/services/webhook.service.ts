@@ -4,9 +4,12 @@ import UserModel from '../models/user.model.js';
 import { stripeService } from './stripe.service.js';
 import { subscriptionService } from './subscription.service.js';
 import { authService } from './auth.service.js';
+import { mailService } from './mail.service.js';
+import { planService } from './plan.service.js';
 import { logger } from '../utils/logger.js';
 import { ApiError } from '../utils/ApiError.js';
 import { normalizeEmailForStorage } from '../utils/email.js';
+import { isPlanSlug } from '../constants/plans.js';
 
 export class WebhookService {
   async handleRawEvent(payload: Buffer, signature: string | undefined) {
@@ -216,9 +219,10 @@ export class WebhookService {
         ? subscription.latest_invoice
         : subscription.latest_invoice?.id ?? null;
 
+    let invoice: Stripe.Invoice | null = null;
     if (latestInvoiceId) {
       try {
-        const invoice = await stripeService.retrieveInvoice(latestInvoiceId);
+        invoice = await stripeService.retrieveInvoice(latestInvoiceId);
         logger.info('Checkout invoice ready', {
           userId,
           sessionId: session.id,
@@ -241,11 +245,104 @@ export class WebhookService {
       });
     }
 
+    await this.sendPurchaseReceipt({
+      session,
+      subscription,
+      invoice,
+      userId,
+      checkoutEmail,
+    });
+
     logger.info('Checkout completed', {
       userId,
       sessionId: session.id,
       subscriptionId,
       invoiceId: latestInvoiceId,
+    });
+  }
+
+  private async sendPurchaseReceipt(params: {
+    session: Stripe.Checkout.Session;
+    subscription: Stripe.Subscription;
+    invoice: Stripe.Invoice | null;
+    userId: string | null;
+    checkoutEmail: string | null;
+  }): Promise<void> {
+    const { session, subscription, invoice, userId, checkoutEmail } = params;
+
+    let recipientEmail = checkoutEmail;
+    let customerName =
+      session.customer_details?.name ??
+      subscription.metadata?.customerName ??
+      null;
+
+    if (!recipientEmail && userId) {
+      const user = await UserModel.findById(userId).lean();
+      if (user?.email) {
+        recipientEmail = normalizeEmailForStorage(user.email);
+        if (!customerName && user.name) customerName = user.name;
+      }
+    }
+
+    if (!recipientEmail) {
+      logger.warn('Purchase receipt skipped — no recipient email', {
+        sessionId: session.id,
+        userId,
+      });
+      return;
+    }
+
+    const planSlugRaw =
+      session.metadata?.planSlug ?? subscription.metadata?.planSlug ?? null;
+    const planSlug = planSlugRaw && isPlanSlug(planSlugRaw) ? planSlugRaw : null;
+
+    let planName = planSlug
+      ? planSlug.charAt(0).toUpperCase() + planSlug.slice(1)
+      : 'Paid';
+    let billingInterval: string | null = null;
+
+    const priceId =
+      typeof subscription.items.data[0]?.price === 'string'
+        ? subscription.items.data[0]?.price
+        : subscription.items.data[0]?.price?.id ?? null;
+
+    if (priceId) {
+      const planByPrice = await planService.getByStripePriceId(priceId);
+      if (planByPrice) {
+        planName = planByPrice.name;
+        billingInterval = planByPrice.billingInterval;
+      }
+    } else if (planSlug) {
+      try {
+        const plan = await planService.getBySlug(planSlug);
+        planName = plan.name;
+        billingInterval = plan.billingInterval;
+      } catch {
+        // Fall back to slug-derived label above.
+      }
+    }
+
+    const amountPaidCents =
+      typeof invoice?.amount_paid === 'number'
+        ? invoice.amount_paid
+        : typeof session.amount_total === 'number'
+          ? session.amount_total
+          : 0;
+    const currency =
+      invoice?.currency ?? session.currency ?? subscription.currency ?? 'usd';
+    const isTrial =
+      subscription.status === 'trialing' ||
+      (typeof amountPaidCents === 'number' && amountPaidCents === 0);
+
+    await mailService.sendPurchaseReceiptEmail(recipientEmail, {
+      planName,
+      billingInterval,
+      amountPaidCents,
+      currency,
+      invoiceNumber: invoice?.number ?? null,
+      hostedInvoiceUrl: invoice?.hosted_invoice_url ?? null,
+      customerName,
+      isTrial,
     });
   }
 

@@ -68,6 +68,31 @@ export function getSubscriptionPriceIds(subscription: Stripe.Subscription): {
   };
 }
 
+/**
+ * Basil+ Invoice objects expose the subscription under
+ * `parent.subscription_details.subscription` (top-level `subscription` removed).
+ * Keep a legacy fallback for older webhook payloads.
+ */
+export function getInvoiceSubscriptionId(
+  invoice: Stripe.Invoice,
+): string | null {
+  const fromParent = invoice.parent?.subscription_details?.subscription;
+  if (fromParent) {
+    return typeof fromParent === 'string' ? fromParent : fromParent.id;
+  }
+
+  const legacy = (
+    invoice as Stripe.Invoice & {
+      subscription?: string | Stripe.Subscription | null;
+    }
+  ).subscription;
+  if (legacy) {
+    return typeof legacy === 'string' ? legacy : legacy.id;
+  }
+
+  return null;
+}
+
 function integrationIdentifierFromKey(idempotencyKey: string): string {
   // Stripe integration_identifier must stay stable for a given idempotent request.
   const compact = idempotencyKey.replace(/[^a-zA-Z0-9]/g, '').slice(-24) || 'checkout';

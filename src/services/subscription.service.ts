@@ -13,6 +13,7 @@ import {
   getSubscriptionPriceIds,
   stripeService,
 } from './stripe.service.js';
+import { purchaseReceiptService } from './purchase-receipt.service.js';
 import { logger } from '../utils/logger.js';
 import { normalizeEmailForStorage } from '../utils/email.js';
 import type Stripe from 'stripe';
@@ -366,6 +367,53 @@ export class SubscriptionService {
         fromPlan: from,
         toPlan: to,
       });
+
+      // Same receipt email as checkout; idempotent with the invoice webhook.
+      // Only send here when we have an invoice id so we can mark idempotency —
+      // otherwise defer to invoice.payment_succeeded (subscription_update).
+      const latestInvoiceRef = updated.latest_invoice;
+      let upgradeInvoice: Stripe.Invoice | null =
+        latestInvoiceRef && typeof latestInvoiceRef !== 'string'
+          ? latestInvoiceRef
+          : null;
+      if (!upgradeInvoice && typeof latestInvoiceRef === 'string') {
+        try {
+          upgradeInvoice = await stripeService.retrieveInvoice(latestInvoiceRef);
+        } catch (error) {
+          logger.warn('Could not retrieve upgrade invoice for receipt', {
+            userId,
+            invoiceId: latestInvoiceRef,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      if (upgradeInvoice?.id) {
+        try {
+          await purchaseReceiptService.sendForSubscriptionPayment({
+            subscription: updated,
+            invoice: upgradeInvoice,
+            userId,
+            sessionPlanSlug: to,
+            source: 'subscription.changePlan:upgrade',
+          });
+        } catch (error) {
+          // Upgrade already succeeded — don't fail the API if mail delivery hiccups.
+          logger.error('Upgrade receipt email failed', {
+            userId,
+            from,
+            to,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      } else {
+        logger.info('Upgrade receipt deferred to invoice webhook', {
+          userId,
+          from,
+          to,
+          subscriptionId: updated.id,
+        });
+      }
 
       logger.info('Subscription upgraded', {
         userId,

@@ -567,6 +567,7 @@ export class SubscriptionService {
     const customerId = await this.ensureStripeCustomer(userId);
     const session = await stripeService.createBillingPortalSession({
       customerId,
+      returnUrl: env.STRIPE.STRIPE_PORTAL_RETURN_URL,
     });
 
     logger.info('Billing portal session created', { userId });

@@ -19,6 +19,8 @@ export interface StripeEnvConfig {
   STRIPE_PREMIUM_PRODUCT_ID: string;
   STRIPE_SUCCESS_URL: string;
   STRIPE_CANCEL_URL: string;
+  /** Deep link (or web URL) Stripe Customer Portal uses for “Return to …”. */
+  STRIPE_PORTAL_RETURN_URL: string;
 }
 
 export interface MailEnvConfig {

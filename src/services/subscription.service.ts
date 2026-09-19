@@ -14,6 +14,7 @@ import {
   stripeService,
 } from './stripe.service.js';
 import { purchaseReceiptService } from './purchase-receipt.service.js';
+import { cancellationEmailService } from './cancellation-email.service.js';
 import { logger } from '../utils/logger.js';
 import { normalizeEmailForStorage } from '../utils/email.js';
 import type Stripe from 'stripe';
@@ -256,6 +257,19 @@ export class SubscriptionService {
         eventType: 'subscription.canceled_immediate',
         message: 'Subscription canceled immediately',
       });
+      void cancellationEmailService
+        .sendForSubscription({
+          subscription: updated,
+          kind: 'ended',
+          userId,
+          source: 'subscription.cancel:immediate',
+        })
+        .catch((error) => {
+          logger.warn('Cancellation email failed after immediate cancel', {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
       logger.info('Subscription canceled immediately', { userId });
       return this.getStatus(userId);
     }
@@ -267,6 +281,19 @@ export class SubscriptionService {
       eventType: 'subscription.cancel_at_period_end',
       message: 'Subscription set to cancel at period end',
     });
+    void cancellationEmailService
+      .sendForSubscription({
+        subscription: updated,
+        kind: 'scheduled',
+        userId,
+        source: 'subscription.cancel:period_end',
+      })
+      .catch((error) => {
+        logger.warn('Cancellation email failed after period-end cancel', {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     logger.info('Subscription cancel at period end', { userId });
     return this.getStatus(userId);
   }

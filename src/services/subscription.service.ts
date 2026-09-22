@@ -14,6 +14,7 @@ import {
   stripeService,
 } from './stripe.service.js';
 import { purchaseReceiptService } from './purchase-receipt.service.js';
+import { cancellationEmailService } from './cancellation-email.service.js';
 import { logger } from '../utils/logger.js';
 import { normalizeEmailForStorage } from '../utils/email.js';
 import type Stripe from 'stripe';
@@ -256,6 +257,19 @@ export class SubscriptionService {
         eventType: 'subscription.canceled_immediate',
         message: 'Subscription canceled immediately',
       });
+      void cancellationEmailService
+        .sendForSubscription({
+          subscription: updated,
+          kind: 'ended',
+          userId,
+          source: 'subscription.cancel:immediate',
+        })
+        .catch((error) => {
+          logger.warn('Cancellation email failed after immediate cancel', {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
       logger.info('Subscription canceled immediately', { userId });
       return this.getStatus(userId);
     }
@@ -267,6 +281,19 @@ export class SubscriptionService {
       eventType: 'subscription.cancel_at_period_end',
       message: 'Subscription set to cancel at period end',
     });
+    void cancellationEmailService
+      .sendForSubscription({
+        subscription: updated,
+        kind: 'scheduled',
+        userId,
+        source: 'subscription.cancel:period_end',
+      })
+      .catch((error) => {
+        logger.warn('Cancellation email failed after period-end cancel', {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     logger.info('Subscription cancel at period end', { userId });
     return this.getStatus(userId);
   }
@@ -302,10 +329,14 @@ export class SubscriptionService {
     const from = sub.currentPlan;
     const to = targetPlan.slug;
 
-    // Same Stripe price = already on this exact plan/interval
+    // Same Stripe price only blocks when the user still has active paid access.
+    // After cancel + period end we keep currentPlan=free but may briefly retain
+    // stripePriceId until sync clears it — that must not block repurchase.
     if (
       targetPlan.stripePriceId &&
       sub.stripePriceId === targetPlan.stripePriceId &&
+      isPaidPlan(from) &&
+      this.hasActiveAccess(sub.status, from) &&
       !sub.cancelAtPeriodEnd &&
       !sub.pendingPlan
     ) {
@@ -567,6 +598,7 @@ export class SubscriptionService {
     const customerId = await this.ensureStripeCustomer(userId);
     const session = await stripeService.createBillingPortalSession({
       customerId,
+      returnUrl: env.STRIPE.STRIPE_PORTAL_RETURN_URL,
     });
 
     logger.info('Billing portal session created', { userId });
@@ -615,10 +647,9 @@ export class SubscriptionService {
     }
 
     const status = mapStripeStatus(subscription.status);
-    const effectivePlan: PlanSlug =
-      status === 'canceled' || status === 'incomplete_expired'
-        ? 'free'
-        : planSlug;
+    const isFullyEnded =
+      status === 'canceled' || status === 'incomplete_expired';
+    const effectivePlan: PlanSlug = isFullyEnded ? 'free' : planSlug;
 
     const latestInvoiceId =
       typeof subscription.latest_invoice === 'string'
@@ -639,9 +670,11 @@ export class SubscriptionService {
             typeof subscription.customer === 'string'
               ? subscription.customer
               : subscription.customer.id,
-          stripeSubscriptionId: subscription.id,
-          stripePriceId: priceId,
-          stripeProductId: productId,
+          // Fully ended subs must clear price/subscription ids so Free → Paid
+          // checkout is not blocked by a stale "same price" match.
+          stripeSubscriptionId: isFullyEnded ? null : subscription.id,
+          stripePriceId: isFullyEnded ? null : priceId,
+          stripeProductId: isFullyEnded ? null : productId,
           currentPlan: effectivePlan,
           status: effectivePlan === 'free' ? 'active' : status,
           trialStart: subscription.trial_start
@@ -652,13 +685,15 @@ export class SubscriptionService {
             : null,
           currentPeriodStart: period.currentPeriodStart,
           currentPeriodEnd: period.currentPeriodEnd,
-          cancelAtPeriodEnd: subscription.cancel_at_period_end,
+          cancelAtPeriodEnd: isFullyEnded
+            ? false
+            : subscription.cancel_at_period_end,
           canceledAt: subscription.canceled_at
             ? new Date(subscription.canceled_at * 1000)
             : null,
           latestInvoiceId,
           latestPaymentIntentId,
-          ...(status === 'canceled' || effectivePlan === 'free'
+          ...(isFullyEnded || effectivePlan === 'free'
             ? { pendingPlan: null, stripeScheduleId: null }
             : {}),
         },

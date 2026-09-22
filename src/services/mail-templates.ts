@@ -430,3 +430,103 @@ export function buildPurchaseReceiptEmail(
     }),
   };
 }
+
+export interface SubscriptionCanceledEmailParams {
+  planName: string;
+  billingInterval?: string | null;
+  customerName?: string | null;
+  /** When access actually ends (ISO or display-ready string). */
+  accessUntil?: string | null;
+  /** scheduled = cancel at period end; ended = subscription fully canceled. */
+  kind: 'scheduled' | 'ended';
+}
+
+function formatAccessDate(value?: string | Date | null): string | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      dateStyle: 'long',
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+/** Transactional email when a subscription is canceled or ends. */
+export function buildSubscriptionCanceledEmail(
+  params: SubscriptionCanceledEmailParams,
+): { subject: string; text: string; html: string } {
+  const year = new Date().getFullYear();
+  const planLabel = params.billingInterval
+    ? `${params.planName} (${params.billingInterval === 'year' ? 'yearly' : 'monthly'})`
+    : params.planName;
+  const accessUntil = formatAccessDate(params.accessUntil ?? null);
+  const greetingName = params.customerName?.trim();
+  const greeting = greetingName ? `Hi ${greetingName},` : 'Hi,';
+  const isScheduled = params.kind === 'scheduled';
+
+  const subject = isScheduled
+    ? `Your ${BRAND.product} ${params.planName} cancellation is confirmed`
+    : `Your ${BRAND.product} ${params.planName} subscription has ended`;
+
+  const heading = isScheduled ? 'Cancellation confirmed' : 'Subscription ended';
+
+  const summary = isScheduled
+    ? accessUntil
+      ? `Your ${planLabel} plan is set to cancel. You keep full access until ${accessUntil}. After that, the plan will not renew and you will move to Free.`
+      : `Your ${planLabel} plan is set to cancel at the end of your billing period. After that, the plan will not renew and you will move to Free.`
+    : `Your ${planLabel} plan on ${BRAND.product} has ended. Paid features are now locked, and you can resubscribe anytime from the desktop app.`;
+
+  const textLines = [
+    greeting,
+    '',
+    summary,
+    '',
+    'You can manage billing or purchase again anytime from Settings → Plan in the desktop app.',
+    '',
+    `© ${year} ${BRAND.product}. Desktop optimization for your computer.`,
+  ];
+
+  const bodyHtml = `
+              <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#334155;">
+                ${escapeHtml(greeting)}
+              </p>
+              <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#334155;">
+                ${escapeHtml(summary)}
+              </p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px;background:${BRAND.codeBg};border:1px solid ${BRAND.border};border-radius:12px;">
+                <tr>
+                  <td style="padding:16px 18px;">
+                    <div style="font-size:10px;letter-spacing:0.14em;font-weight:700;color:${BRAND.accent};text-transform:uppercase;margin-bottom:10px;">Cancellation details</div>
+                    <div style="font-size:14px;line-height:1.7;color:#1e293b;">
+                      <div><strong>Plan:</strong> ${escapeHtml(planLabel)}</div>
+                      <div><strong>Status:</strong> ${
+                        isScheduled ? 'Cancels at period end' : 'Ended — Free plan'
+                      }</div>
+                      ${
+                        accessUntil
+                          ? `<div><strong>${
+                              isScheduled ? 'Access until' : 'Ended on'
+                            }:</strong> ${escapeHtml(accessUntil)}</div>`
+                          : ''
+                      }
+                    </div>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:0 0 8px;font-size:12px;line-height:1.55;color:${BRAND.muted};">
+                You can manage billing or purchase again anytime from Settings → Plan in the desktop app.
+              </p>`;
+
+  return {
+    subject,
+    text: textLines.join('\n'),
+    html: wrapEmailLayout({
+      subject,
+      heading,
+      bodyHtml,
+    }),
+  };
+}

@@ -7,8 +7,10 @@ import {
   buildPurchaseReceiptEmail,
   buildRegisterOtpEmail,
   buildResetOtpEmail,
+  buildSubscriptionCanceledEmail,
   buildWelcomeEmail,
   type PurchaseReceiptEmailParams,
+  type SubscriptionCanceledEmailParams,
   type WelcomeEmailParams,
 } from './mail-templates.js';
 
@@ -136,6 +138,19 @@ export class MailService {
     params: PurchaseReceiptEmailParams,
   ): Promise<void> {
     const template = buildPurchaseReceiptEmail(params);
+    await this.sendSafe({
+      to: email,
+      subject: template.subject,
+      text: template.text,
+      html: template.html,
+    });
+  }
+
+  async sendSubscriptionCanceledEmail(
+    email: string,
+    params: SubscriptionCanceledEmailParams,
+  ): Promise<void> {
+    const template = buildSubscriptionCanceledEmail(params);
     await this.sendSafe({
       to: email,
       subject: template.subject,

@@ -8,6 +8,7 @@ import {
 import { subscriptionService } from './subscription.service.js';
 import { authService } from './auth.service.js';
 import { purchaseReceiptService } from './purchase-receipt.service.js';
+import { cancellationEmailService } from './cancellation-email.service.js';
 import { logger } from '../utils/logger.js';
 import { ApiError } from '../utils/ApiError.js';
 import { normalizeEmailForStorage } from '../utils/email.js';
@@ -64,7 +65,6 @@ export class WebhookService {
         break;
 
       case 'customer.subscription.created':
-      case 'customer.subscription.updated':
         await subscriptionService.syncFromStripeSubscription(
           event.data.object as Stripe.Subscription,
           {
@@ -72,6 +72,13 @@ export class WebhookService {
             message: `Stripe ${event.type}`,
             stripeEventId: event.id,
           },
+        );
+        break;
+
+      case 'customer.subscription.updated':
+        await this.onSubscriptionUpdated(
+          event.data.object as Stripe.Subscription,
+          event,
         );
         break;
 
@@ -266,6 +273,43 @@ export class WebhookService {
     });
   }
 
+  private async onSubscriptionUpdated(
+    subscription: Stripe.Subscription,
+    event: Stripe.Event,
+  ): Promise<void> {
+    await subscriptionService.syncFromStripeSubscription(subscription, {
+      eventType: event.type,
+      message: `Stripe ${event.type}`,
+      stripeEventId: event.id,
+    });
+
+    const previous = event.data.previous_attributes as
+      | Partial<Stripe.Subscription>
+      | undefined;
+    const becameCancelAtPeriodEnd =
+      previous != null &&
+      Object.prototype.hasOwnProperty.call(previous, 'cancel_at_period_end') &&
+      previous.cancel_at_period_end === false &&
+      subscription.cancel_at_period_end === true;
+
+    if (!becameCancelAtPeriodEnd) return;
+
+    const userId =
+      subscription.metadata?.userId ??
+      (await subscriptionService.resolveUserIdFromCustomer(
+        typeof subscription.customer === 'string'
+          ? subscription.customer
+          : subscription.customer.id,
+      ));
+
+    await cancellationEmailService.sendForSubscription({
+      subscription,
+      kind: 'scheduled',
+      userId,
+      source: 'webhook.customer.subscription.updated:cancel_at_period_end',
+    });
+  }
+
   private async onSubscriptionDeleted(
     subscription: Stripe.Subscription,
     eventId: string,
@@ -275,6 +319,21 @@ export class WebhookService {
       message: 'Subscription deleted — reverted to Free',
       stripeEventId: eventId,
       toPlan: 'free',
+    });
+
+    const userId =
+      subscription.metadata?.userId ??
+      (await subscriptionService.resolveUserIdFromCustomer(
+        typeof subscription.customer === 'string'
+          ? subscription.customer
+          : subscription.customer.id,
+      ));
+
+    await cancellationEmailService.sendForSubscription({
+      subscription,
+      kind: 'ended',
+      userId,
+      source: 'webhook.customer.subscription.deleted',
     });
   }
 

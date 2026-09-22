@@ -106,6 +106,11 @@ export const env: EnvConfig = Object.freeze({
       'STRIPE_CANCEL_URL',
       'http://localhost:3000/pricing?checkout=cancel',
     ),
+    STRIPE_PORTAL_RETURN_URL: getEnv(
+      'STRIPE_PORTAL_RETURN_URL',
+      // Must be http(s) — Stripe rejects custom schemes. Web page deep-links into the app.
+      'http://localhost:3000/pricing?billing=return',
+    ),
   },
   MAIL: {
     RESEND_API_KEY: getOptionalEnv('RESEND_API_KEY'),

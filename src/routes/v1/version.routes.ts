@@ -34,6 +34,11 @@ versionRouter.post(
   versionController.addFiles,
 );
 
+versionRouter.post(
+  '/:version/cleanup-previous',
+  versionController.cleanupPrevious,
+);
+
 versionRouter.delete('/:version', versionController.remove);
 
 export default versionRouter;

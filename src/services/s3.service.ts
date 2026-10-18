@@ -1,4 +1,10 @@
-import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import {
+  GetObjectCommand,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  ListObjectsV2Command,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -40,6 +46,11 @@ export interface PresignedDownloadResult {
   bucket: string;
   fileName: string;
   expiresIn: number;
+}
+
+export interface DeleteObjectsResult {
+  deleted: string[];
+  errors: string[];
 }
 
 function sanitizeFileName(fileName: string): string {
@@ -139,6 +150,126 @@ export class S3Service {
       fileName: safeName,
       expiresIn,
     };
+  }
+
+  async deleteObject(storageUrlOrKey: string): Promise<boolean> {
+    const bucket = env.AWS.AWS_S3_BUCKET_NAME;
+    let key: string;
+    try {
+      key =
+        storageUrlOrKey.startsWith('http://') ||
+        storageUrlOrKey.startsWith('https://')
+          ? extractS3KeyFromUrl(storageUrlOrKey)
+          : storageUrlOrKey;
+    } catch {
+      return false;
+    }
+
+    try {
+      const command = new DeleteObjectCommand({
+        Bucket: bucket,
+        Key: key,
+      });
+      await s3Client.send(command);
+      return true;
+    } catch (error) {
+      console.error(`Failed to delete S3 object ${key}:`, error);
+      return false;
+    }
+  }
+
+  async deleteObjects(
+    storageUrlsOrKeys: string[],
+  ): Promise<DeleteObjectsResult> {
+    const bucket = env.AWS.AWS_S3_BUCKET_NAME;
+    const keysToProcess = new Set<string>();
+
+    for (const item of storageUrlsOrKeys) {
+      if (!item) continue;
+      try {
+        const key =
+          item.startsWith('http://') || item.startsWith('https://')
+            ? extractS3KeyFromUrl(item)
+            : item;
+        if (key) keysToProcess.add(key);
+      } catch (err) {
+        console.warn(`Could not extract key from ${item}:`, err);
+      }
+    }
+
+    const allKeys = Array.from(keysToProcess);
+    const deleted: string[] = [];
+    const errors: string[] = [];
+
+    if (allKeys.length === 0) {
+      return { deleted, errors };
+    }
+
+    const CHUNK_SIZE = 1000;
+    for (let i = 0; i < allKeys.length; i += CHUNK_SIZE) {
+      const chunk = allKeys.slice(i, i + CHUNK_SIZE);
+      try {
+        const command = new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: {
+            Objects: chunk.map((Key) => ({ Key })),
+            Quiet: false,
+          },
+        });
+        const res = await s3Client.send(command);
+        if (res.Deleted) {
+          deleted.push(...res.Deleted.map((d) => d.Key ?? '').filter(Boolean));
+        }
+        if (res.Errors) {
+          errors.push(...res.Errors.map((e) => `${e.Key}: ${e.Message}`));
+        }
+      } catch (err) {
+        console.error(
+          'Batch DeleteObjects failed on chunk, trying individual deletion:',
+          err,
+        );
+        for (const key of chunk) {
+          const ok = await this.deleteObject(key);
+          if (ok) deleted.push(key);
+          else errors.push(key);
+        }
+      }
+    }
+
+    return { deleted, errors };
+  }
+
+  async deletePrefix(prefix: string): Promise<{ deletedCount: number }> {
+    const bucket = env.AWS.AWS_S3_BUCKET_NAME;
+    let continuationToken: string | undefined;
+    let deletedCount = 0;
+
+    const normalizedPrefix = prefix.replace(/^\/+/, '');
+    if (!normalizedPrefix) {
+      throw new Error('Refusing to delete with empty prefix');
+    }
+
+    do {
+      const listCommand = new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: normalizedPrefix,
+        ContinuationToken: continuationToken,
+      });
+
+      const listResponse = await s3Client.send(listCommand);
+      const objects = (listResponse.Contents ?? [])
+        .map((obj) => obj.Key)
+        .filter((k): k is string => Boolean(k));
+
+      if (objects.length > 0) {
+        const { deleted } = await this.deleteObjects(objects);
+        deletedCount += deleted.length;
+      }
+
+      continuationToken = listResponse.NextContinuationToken;
+    } while (continuationToken);
+
+    return { deletedCount };
   }
 }
 

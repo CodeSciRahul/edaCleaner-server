@@ -129,6 +129,22 @@ export class VersionController {
       });
     },
   );
+
+  public cleanupPrevious = asyncHandler(
+    async (req: Request, res: Response): Promise<void> => {
+      const data = await versionService.cleanupPreviousByVersion(
+        String(req.params.version),
+      );
+
+      ApiResponse.success({
+        res,
+        data,
+        message:
+          'Previous versions and downloadable files cleaned up from S3 successfully',
+        statusCode: HTTP_STATUS.OK,
+      });
+    },
+  );
 }
 
 export const versionController = new VersionController();

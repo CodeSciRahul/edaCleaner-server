@@ -68,6 +68,7 @@ export const createVersionRules = [
   body('forceUpdate').optional().isBoolean(),
   body('mandatory').optional().isBoolean(),
   body('isPublished').optional().isBoolean(),
+  body('cleanupPrevious').optional().isBoolean(),
   body('releaseNotes').optional().isArray(),
   body('releaseNotes.*').optional().isString().trim(),
   body('files')
@@ -86,5 +87,6 @@ export const addVersionFilesRules = [
     .isArray({ min: 1 })
     .withMessage('files must contain at least one installer'),
   body('markLatest').optional().isBoolean(),
+  body('cleanupPrevious').optional().isBoolean(),
   ...fileRules('files.*'),
 ];

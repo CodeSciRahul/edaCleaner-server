@@ -1,7 +1,14 @@
 import mongoose from 'mongoose';
 import VersionModel from '../models/edaCleanerVersion.model.js';
+import { s3Service } from './s3.service.js';
 import { ApiError } from '../utils/ApiError.js';
 import { MESSAGES } from '../constants/index.js';
+
+export interface CleanupPreviousVersionsResult {
+  deletedFilesCount: number;
+  deletedVersionsCount: number;
+  deletedVersionNames: string[];
+}
 
 export type Platform = 'windows' | 'macos' | 'linux';
 export type Architecture = 'x64' | 'arm64';
@@ -49,6 +56,13 @@ function normalizeVersion(version: string): string {
 }
 
 export class VersionService {
+  readonly REQUIRED_PLATFORMS: Platform[] = ['windows', 'macos', 'linux'];
+
+  hasAllPlatforms(files: Array<{ platform: string }>): boolean {
+    const platforms = new Set(files.map((f) => f.platform));
+    return this.REQUIRED_PLATFORMS.every((p) => platforms.has(p as Platform));
+  }
+
   async getNextBuildNumber(): Promise<number> {
     const latest = await VersionModel.findOne()
       .sort({ buildNumber: -1 })
@@ -90,7 +104,18 @@ export class VersionService {
       );
     }
 
-    return doc.toObject();
+    let cleanup: CleanupPreviousVersionsResult | null = null;
+    if (this.hasAllPlatforms(doc.files as VersionFileInput[])) {
+      cleanup = await this.cleanupPreviousVersions(
+        doc._id as mongoose.Types.ObjectId,
+        doc.version,
+      );
+    }
+
+    return {
+      ...doc.toObject(),
+      cleanup,
+    };
   }
 
   async addFiles(versionRaw: string, input: AddVersionFilesInput) {
@@ -153,7 +178,18 @@ export class VersionService {
       );
     }
 
-    return doc.toObject();
+    let cleanup: CleanupPreviousVersionsResult | null = null;
+    if (this.hasAllPlatforms(doc.files as VersionFileInput[])) {
+      cleanup = await this.cleanupPreviousVersions(
+        doc._id as mongoose.Types.ObjectId,
+        doc.version,
+      );
+    }
+
+    return {
+      ...doc.toObject(),
+      cleanup,
+    };
   }
 
   async getByVersion(versionRaw: string) {
@@ -293,11 +329,114 @@ export class VersionService {
 
   async remove(versionRaw: string): Promise<void> {
     const version = normalizeVersion(versionRaw);
-    const result = await VersionModel.deleteOne({ version });
+    const doc = await VersionModel.findOne({ version });
+
+    if (!doc) {
+      throw ApiError.notFound(MESSAGES.VERSION_NOT_FOUND);
+    }
+
+    const storageUrls = (doc.files ?? [])
+      .map((f) => f.storageUrl)
+      .filter((url): url is string => Boolean(url));
+
+    if (storageUrls.length > 0) {
+      await s3Service.deleteObjects(storageUrls);
+    }
+
+    try {
+      await s3Service.deletePrefix(`uploads/releases/${version}/`);
+    } catch (err) {
+      console.warn(`[VersionService] Failed to clean prefix for ${version}:`, err);
+    }
+
+    const result = await VersionModel.deleteOne({ _id: doc._id });
 
     if (result.deletedCount === 0) {
       throw ApiError.notFound(MESSAGES.VERSION_NOT_FOUND);
     }
+  }
+
+  async cleanupPreviousByVersion(
+    versionRaw: string,
+  ): Promise<CleanupPreviousVersionsResult> {
+    const version = normalizeVersion(versionRaw);
+    const doc = await VersionModel.findOne({ version });
+
+    if (!doc) {
+      throw ApiError.notFound(MESSAGES.VERSION_NOT_FOUND);
+    }
+
+    if (!this.hasAllPlatforms(doc.files as VersionFileInput[])) {
+      throw ApiError.badRequest(
+        `Version ${version} does not yet have files for all required platforms (windows, macos, linux). Previous downloadable files cannot be deleted until all OS files are uploaded.`,
+      );
+    }
+
+    return this.cleanupPreviousVersions(
+      doc._id as mongoose.Types.ObjectId,
+      doc.version,
+    );
+  }
+
+  async cleanupPreviousVersions(
+    currentVersionId: mongoose.Types.ObjectId,
+    currentVersion: string,
+  ): Promise<CleanupPreviousVersionsResult> {
+    const otherVersions = await VersionModel.find({
+      _id: { $ne: currentVersionId },
+    });
+
+    if (otherVersions.length === 0) {
+      return {
+        deletedFilesCount: 0,
+        deletedVersionsCount: 0,
+        deletedVersionNames: [],
+      };
+    }
+
+    const storageUrls: string[] = [];
+    const versionNames: string[] = [];
+
+    for (const v of otherVersions) {
+      if (v.version) versionNames.push(v.version);
+      for (const f of v.files ?? []) {
+        if (f.storageUrl) {
+          storageUrls.push(f.storageUrl);
+        }
+      }
+    }
+
+    if (storageUrls.length > 0) {
+      const { deleted, errors } = await s3Service.deleteObjects(storageUrls);
+      console.log(
+        `[VersionService] Deleted ${deleted.length} S3 objects for previous versions: ${versionNames.join(', ')}. Errors: ${errors.length}`,
+      );
+    }
+
+    for (const vName of versionNames) {
+      try {
+        await s3Service.deletePrefix(`uploads/releases/${vName}/`);
+      } catch (err) {
+        console.warn(
+          `[VersionService] Error cleaning prefix for version ${vName}:`,
+          err,
+        );
+      }
+    }
+
+    const deleteResult = await VersionModel.deleteMany({
+      _id: { $ne: currentVersionId },
+    });
+
+    console.log(
+      `[VersionService] Removed ${deleteResult.deletedCount} previous version records from MongoDB (retained version ${currentVersion})`,
+    );
+
+    return {
+      deletedFilesCount: storageUrls.length,
+      deletedVersionsCount: deleteResult.deletedCount ?? 0,
+      deletedVersionNames: versionNames,
+    };
   }
 
   /**
